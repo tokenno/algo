@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  < paradoxes charset="UTF-8">
+  <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Stochastic Sequencer</title>
   <style>
@@ -33,7 +33,7 @@
 </head>
 <body>
   <h1>Stochastic Sequencer</h1>
-  <p>Tilt your device to influence the sequence. Click "Start" to begin.</p>
+  <p>Tilt your device to influence the sequence and speed (20-200 BPM). Click "Start" to begin.</p>
   <button id="startBtn">Start</button>
   <div id="status"></div>
   <canvas id="visualizer" width="300" height="100"></canvas>
@@ -124,6 +124,16 @@
       motionFactor = Math.min(Math.max(motionFactor, 0), 1); // Clamp
     }
 
+    // Calculate delay from motionFactor (20 BPM to 200 BPM)
+    function getNoteDelay(motionFactor) {
+      const minBPM = 20;
+      const maxBPM = 200;
+      const minDelay = 60000 / maxBPM; // 300ms for 200 BPM
+      const maxDelay = 60000 / minBPM; // 3000ms for 20 BPM
+      // Linearly map motionFactor (0 to 1) to delay (3000ms to 300ms)
+      return maxDelay - (maxDelay - minDelay) * motionFactor;
+    }
+
     // Sequencer loop
     let currentNoteIdx = 0;
     function sequencerLoop() {
@@ -132,7 +142,8 @@
       currentNoteIdx = chooseNextNote(currentNoteIdx);
       playNote(notes[currentNoteIdx], audioCtx.currentTime);
       drawVisualizer(currentNoteIdx, motionFactor);
-      setTimeout(sequencerLoop, 500);
+      const delay = getNoteDelay(motionFactor);
+      setTimeout(sequencerLoop, delay);
     }
 
     // Start button
@@ -182,4 +193,3 @@
   </script>
 </body>
 </html>
-
