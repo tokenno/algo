@@ -35,7 +35,7 @@
 </head>
 <body>
   <h1>Stochastic Sequencer</h1>
-  <p>Tilt front-to-back for scales, rotate for waveform, shake for speed (20-200 BPM), cover/uncover screen for note duration. Click "Start" to begin.</p>
+  <p>Tilt front-to-back for scales, rotate for waveform, shake gently for speed (20-200 BPM), tap/hold screen for note duration. Click "Start" to begin.</p>
   <button id="startBtn">Start</button>
   <div id="status"></div>
   <canvas id="visualizer" width="300" height="100"></canvas>
@@ -91,7 +91,7 @@
 
     // Sound generation
     let currentWaveform = 'sine';
-    let noteDuration = 1.0; // Default duration (fallback)
+    let noteDuration = 1.0; // Default duration
     function playNote(frequency, time) {
       if (!audioCtx) {
         document.getElementById('status').textContent = 'AudioContext unavailable.';
@@ -118,17 +118,17 @@
     // Visualizer setup
     const canvas = document.getElementById('visualizer');
     const ctx = canvas.getContext('2d');
-    function drawVisualizer(noteIdx, motionFactor, scaleName, waveform, duration, illuminance) {
+    function drawVisualizer(noteIdx, motionFactor, scaleName, waveform, duration, isTouching) {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.fillStyle = `hsl(${noteIdx * 360 / currentScale.length}, 70%, 50%)`;
       ctx.fillRect(0, 0, canvas.width * motionFactor, canvas.height);
       ctx.fillStyle = 'black';
       ctx.font = '12px Arial';
-      const luxText = illuminance !== null ? `Lux: ${illuminance.toFixed(0)}` : 'No Light Sensor';
-      ctx.fillText(`${scaleName} | ${waveform} | Dur: ${duration.toFixed(2)}s | ${luxText}`, 10, 20);
+      const touchText = isTouching ? 'Touch: On' : 'Touch: Off';
+      ctx.fillText(`${scaleName} | ${waveform} | Dur: ${duration.toFixed(2)}s | ${touchText}`, 10, 20);
     }
 
-    // Device motion handling (for speed)
+    // Device motion handling (for speed, more sensitive)
     let motionFactor = 0;
     function handleMotion(event) {
       if (!event.accelerationIncludingGravity) {
@@ -136,9 +136,10 @@
         return;
       }
       const { x, y, z } = event.accelerationIncludingGravity;
-      motionFactor = Math.sqrt(x * x + y * y + z * z) / 15;
-      motionFactor = Math.min(Math.max(motionFactor, 0), 1);
-      motionFactor = motionFactor * motionFactor;
+      motionFactor = Math.sqrt(x * x + y * y + z * z) / 10; // Lower divisor for sensitivity
+      motionFactor = Math.min(Math.max(motionFactor, 0), 1); // Clamp to 0-1
+      const bpm = 20 + motionFactor * (200 - 20); // Linear mapping to 20-200 BPM
+      console.log(`Motion: ${motionFactor.toFixed(2)}, BPM: ${bpm.toFixed(0)}`);
     }
 
     // Device orientation handling (for scale and waveform)
@@ -160,7 +161,7 @@
         currentScaleName = 'Major';
       } else {
         currentScale = scales.majorPent;
-        currentScaleName = 'Major';
+        currentScaleName = 'Major Pent';
       }
       markovChain = Array(currentScale.length).fill().map(() => 
         Array(currentScale.length).fill(1 / currentScale.length)
@@ -177,45 +178,19 @@
       }
     }
 
-    // Ambient light sensor handling (for note duration)
-    let lightSupported = false;
-    let currentIlluminance = null;
-    function setupLightSensor() {
-      if ('AmbientLightSensor' in window) {
-        try {
-          const sensor = new AmbientLightSensor();
-          sensor.addEventListener('reading', () => {
-            lightSupported = true;
-            currentIlluminance = sensor.illuminance;
-            // Map illuminance (0-1000 lux) to duration (0.5s to 2.5s)
-            if (currentIlluminance < 10) {
-              noteDuration = 0.5; // Covered (dark)
-            } else if (currentIlluminance > 100) {
-              noteDuration = 2.5; // Uncovered (bright)
-            } else {
-              // Linear interpolation between 10-100 lux
-              noteDuration = 0.5 + (currentIlluminance - 10) / 90 * (2.5 - 0.5);
-            }
-            console.log(`Light sensor: ${currentIlluminance} lux, duration: ${noteDuration}s`);
-          });
-          sensor.addEventListener('error', (e) => {
-            console.error('Light sensor error:', e);
-            document.getElementById('status').textContent = 'Light sensor error.';
-            noteDuration = 1.0;
-            currentIlluminance = null;
-          });
-          sensor.start();
-        } catch (e) {
-          console.error('Failed to initialize AmbientLightSensor:', e);
-          document.getElementById('status').textContent = 'Light sensor not supported.';
-          noteDuration = 1.0;
-          currentIlluminance = null;
-        }
-      } else {
-        document.getElementById('status').textContent = 'Light sensor not supported.';
-        noteDuration = 1.0;
-        currentIlluminance = null;
-      }
+    // Touch handling (for note duration)
+    let isTouching = false;
+    function setupTouchControls() {
+      canvas.addEventListener('touchstart', () => {
+        isTouching = true;
+        noteDuration = 0.5; // Short notes when touching
+        console.log('Touch started, duration: 0.5s');
+      });
+      canvas.addEventListener('touchend', () => {
+        isTouching = false;
+        noteDuration = 2.5; // Long notes when not touching
+        console.log('Touch ended, duration: 2.5s');
+      });
     }
 
     // Calculate delay from motionFactor (20 BPM to 200 BPM)
@@ -234,7 +209,7 @@
       updateMarkovChain();
       currentNoteIdx = chooseNextNote(currentNoteIdx % currentScale.length);
       playNote(currentScale[currentNoteIdx], audioCtx.currentTime);
-      drawVisualizer(currentNoteIdx, motionFactor, currentScaleName, currentWaveform, noteDuration, currentIlluminance);
+      drawVisualizer(currentNoteIdx, motionFactor, currentScaleName, currentWaveform, noteDuration, isTouching);
       const delay = getNoteDelay(motionFactor);
       setTimeout(sequencerLoop, delay);
     }
@@ -257,7 +232,7 @@
       }
       if (!isPlaying) {
         isPlaying = true;
-        setupLightSensor();
+        setupTouchControls();
         sequencerLoop();
         document.getElementById('startBtn').textContent = 'Stop';
       } else {
