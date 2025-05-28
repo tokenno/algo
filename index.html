@@ -83,6 +83,7 @@
       const port = parseInt(document.getElementById('oscPort').value);
       if (!ip || !port || isNaN(port)) {
         document.getElementById('status').textContent = 'Enter valid IP and port.';
+        console.error('Invalid IP or port:', ip, port);
         return;
       }
       try {
@@ -90,24 +91,23 @@
           osc.close();
           osc = null;
         }
-        osc = new OSC({ plugin: new OSC.DatagramPlugin({ send: { host: ip, port: port } }) });
+        osc = new OSC({ plugin: new OSC.WebsocketClientPlugin({ host: ip, port: port }) });
         osc.open();
         osc.on('open', () => {
           oscConnected = true;
           document.getElementById('status').textContent = `OSC connected to ${ip}:${port}`;
           console.log(`OSC connected to ${ip}:${port}`);
-          // Send test message
           osc.send(new OSC.Message('/test', 1));
           logOscMessage('Sent /test 1');
           console.log('Sent test OSC: /test 1');
         });
         osc.on('error', (err) => {
           oscConnected = false;
-          document.getElementById('status').textContent = 'OSC connection failed. Check IP/port and network.';
+          document.getElementById('status').textContent = `OSC connection failed: ${err.message}`;
           console.error('OSC error:', err);
         });
       } catch (e) {
-        document.getElementById('status').textContent = 'OSC initialization failed.';
+        document.getElementById('status').textContent = 'OSC initialization failed: ' + e.message;
         console.error('OSC init failed:', e);
       }
     }
@@ -393,6 +393,14 @@
         if (audioCtx.state === 'suspended') {
           await audioCtx.resume();
           console.log('AudioContext resumed:', audioCtx.state);
+          // Play test tone
+          const osc = audioCtx.createOscillator();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(440, audioCtx.currentTime);
+          osc.connect(audioCtx.destination);
+          osc.start();
+          osc.stop(audioCtx.currentTime + 0.1);
+          console.log('Test tone played');
         }
         if (!isPlaying) {
           isPlaying = true;
@@ -407,7 +415,7 @@
           console.log('Sequencer stopped');
         }
       } catch (e) {
-        document.getElementById('status').textContent = 'Failed to start sequencer.';
+        document.getElementById('status').textContent = 'Failed to start sequencer: ' + e.message;
         console.error('Start button error:', e);
       }
     });
@@ -437,7 +445,7 @@
           console.warn('Orientation permission denied');
         }
       } catch (e) {
-        document.getElementById('status').textContent = 'Failed to access sensors.';
+        document.getElementById('status').textContent = 'Failed to access sensors: ' + e.message;
         console.error('Permission error:', e);
       }
     }
