@@ -13,7 +13,6 @@
       background-color: #f0f0f0;
       margin: 0;
       padding: 20px;
-      touch-action: none;
     }
     canvas {
       border: 1px solid #333;
@@ -35,8 +34,9 @@
 </head>
 <body>
   <h1>Stochastic Sequencer</h1>
-  <p>Tilt front-to-back for scales, rotate for waveform, shake gently for speed (20-200 BPM), tap/hold screen for note duration. Click "Start" to begin.</p>
+  <p>Tilt front-to-back for scales, rotate for waveform, tilt gently for speed (20-200 BPM), tap/hold screen or use toggle for note duration. Click "Start" to begin.</p>
   <button id="startBtn">Start</button>
+  <button id="toggleDurationBtn">Toggle Duration (2.5s)</button>
   <div id="status"></div>
   <canvas id="visualizer" width="300" height="100"></canvas>
   <script>
@@ -118,17 +118,17 @@
     // Visualizer setup
     const canvas = document.getElementById('visualizer');
     const ctx = canvas.getContext('2d');
-    function drawVisualizer(noteIdx, motionFactor, scaleName, waveform, duration, isTouching) {
+    function drawVisualizer(noteIdx, motionFactor, scaleName, waveform, duration, isTouching, bpm) {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.fillStyle = `hsl(${noteIdx * 360 / currentScale.length}, 70%, 50%)`;
       ctx.fillRect(0, 0, canvas.width * motionFactor, canvas.height);
       ctx.fillStyle = 'black';
       ctx.font = '12px Arial';
       const touchText = isTouching ? 'Touch: On' : 'Touch: Off';
-      ctx.fillText(`${scaleName} | ${waveform} | Dur: ${duration.toFixed(2)}s | ${touchText}`, 10, 20);
+      ctx.fillText(`${scaleName} | ${waveform} | Dur: ${duration.toFixed(2)}s | ${touchText} | BPM: ${bpm.toFixed(0)}`, 10, 20);
     }
 
-    // Device motion handling (for speed, more sensitive)
+    // Device motion handling (speed, start at 20 BPM)
     let motionFactor = 0;
     function handleMotion(event) {
       if (!event.accelerationIncludingGravity) {
@@ -136,9 +136,10 @@
         return;
       }
       const { x, y, z } = event.accelerationIncludingGravity;
-      motionFactor = Math.sqrt(x * x + y * y + z * z) / 10; // Lower divisor for sensitivity
-      motionFactor = Math.min(Math.max(motionFactor, 0), 1); // Clamp to 0-1
-      const bpm = 20 + motionFactor * (200 - 20); // Linear mapping to 20-200 BPM
+      const magnitude = Math.sqrt(x * x + y * y + z * z);
+      motionFactor = (magnitude - 9.8) / 5; // Normalize for gravity, sensitive
+      motionFactor = Math.min(Math.max(motionFactor, 0), 1); // Clamp 0-1
+      const bpm = 20 + motionFactor * (200 - 20); // Linear to 20-200 BPM
       console.log(`Motion: ${motionFactor.toFixed(2)}, BPM: ${bpm.toFixed(0)}`);
     }
 
@@ -181,17 +182,39 @@
     // Touch handling (for note duration)
     let isTouching = false;
     function setupTouchControls() {
-      canvas.addEventListener('touchstart', () => {
+      document.body.addEventListener('touchstart', (e) => {
+        e.preventDefault();
         isTouching = true;
-        noteDuration = 0.5; // Short notes when touching
+        noteDuration = 0.5; // Short notes
         console.log('Touch started, duration: 0.5s');
       });
-      canvas.addEventListener('touchend', () => {
+      document.body.addEventListener('touchend', (e) => {
+        e.preventDefault();
         isTouching = false;
-        noteDuration = 2.5; // Long notes when not touching
+        noteDuration = 2.5; // Long notes
         console.log('Touch ended, duration: 2.5s');
       });
+      document.body.addEventListener('touchcancel', (e) => {
+        e.preventDefault();
+        isTouching = false;
+        noteDuration = 2.5;
+        console.log('Touch cancelled, duration: 2.5s');
+      });
     }
+
+    // Toggle button for duration (fallback)
+    const toggleDurationBtn = document.getElementById('toggleDurationBtn');
+    toggleDurationBtn.addEventListener('click', () => {
+      if (noteDuration === 0.5) {
+        noteDuration = 2.5;
+        toggleDurationBtn.textContent = 'Toggle Duration (2.5s)';
+        console.log('Toggle button: duration set to 2.5s');
+      } else {
+        noteDuration = 0.5;
+        toggleDurationBtn.textContent = 'Toggle Duration (0.5s)';
+        console.log('Toggle button: duration set to 0.5s');
+      }
+    });
 
     // Calculate delay from motionFactor (20 BPM to 200 BPM)
     function getNoteDelay(motionFactor) {
@@ -209,7 +232,8 @@
       updateMarkovChain();
       currentNoteIdx = chooseNextNote(currentNoteIdx % currentScale.length);
       playNote(currentScale[currentNoteIdx], audioCtx.currentTime);
-      drawVisualizer(currentNoteIdx, motionFactor, currentScaleName, currentWaveform, noteDuration, isTouching);
+      const bpm = 20 + motionFactor * (200 - 20);
+      drawVisualizer(currentNoteIdx, motionFactor, currentScaleName, currentWaveform, noteDuration, isTouching, bpm);
       const delay = getNoteDelay(motionFactor);
       setTimeout(sequencerLoop, delay);
     }
