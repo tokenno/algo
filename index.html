@@ -47,7 +47,7 @@
   <p>Tilt front-to-back for scales, rotate for waveform, tilt gently for speed (20-200 BPM), tap/hold screen or use toggle for note duration. Enter IP/port and connect OSC to send to Ableton/Pd wirelessly.</p>
   <label>OSC IP: <input id="oscIp" type="text" placeholder="192.168.1.100" value="192.168.1.100"></label>
   <label>Port: <input id="oscPort" type="number" placeholder="9000" value="9000"></label>
-  <button id="connectBtn">Connect OSC</button>
+  <button id="connectOscBtn">Connect OSC</button>
   <button id="startBtn">Start</button>
   <button id="toggleDurationBtn">Toggle Duration (2.5s)</button>
   <div id="status"></div>
@@ -55,12 +55,15 @@
   <canvas id="visualizer" width="300" height="100"></canvas>
   <script>
     // Web Audio API setup
-    let audioCtx;
+    let audioCtx = null;
     try {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') {
+        document.getElementById('status').textContent = 'AudioContext suspended. Click Start to resume.';
+      }
     } catch (e) {
       document.getElementById('status').textContent = 'Web Audio API not supported.';
-      
+      console.error('AudioContext creation failed:', e);
     }
     let isPlaying = false;
 
@@ -92,24 +95,24 @@
         osc.on('open', () => {
           oscConnected = true;
           document.getElementById('status').textContent = `OSC connected to ${ip}:${port}`;
-          
+          console.log(`OSC connected to ${ip}:${port}`);
+          // Send test message
+          osc.send(new OSC.Message('/test', 1));
+          logOscMessage('Sent /test 1');
+          console.log('Sent test OSC: /test 1');
         });
         osc.on('error', (err) => {
           oscConnected = false;
           document.getElementById('status').textContent = 'OSC connection failed. Check IP/port and network.';
-          
+          console.error('OSC error:', err);
         });
-        // Test OSC message
-        osc.send(new OSC.Message('/test', 1));
-        logOscMessage('Sent /test 1');
-        
       } catch (e) {
         document.getElementById('status').textContent = 'OSC initialization failed.';
-        
+        console.error('OSC init failed:', e);
       }
     }
 
-    document.getElementById('connectBtn').addEventListener('click', connectOsc);
+    document.getElementById('connectOscBtn').addEventListener('click', connectOsc);
 
     // Scale definitions
     const scales = {
@@ -125,29 +128,39 @@
 
     // Update Markov chain
     function updateMarkovChain() {
-      for (let i = 0; i < currentScale.length; i++) {
-        let row = markovChain[i];
-        let total = 0;
-        for (let j = 0; j < currentScale.length; j++) {
-          row[j] = Math.random();
-          total += row[j];
+      try {
+        for (let i = 0; i < currentScale.length; i++) {
+          let row = markovChain[i];
+          let total = 0;
+          for (let j = 0; j < currentScale.length; j++) {
+            row[j] = Math.random();
+            total += row[j];
+          }
+          for (let j = 0; j < currentScale.length; j++) {
+            row[j] /= total;
+          }
         }
-        for (let j = j < currentScale.length; j++) {
-          row[j] /= total;
-        }
+      } catch (e) {
+        console.error('Markov chain update failed:', e);
+        document.getElementById('status').textContent = 'Error updating sequencer.';
       }
     }
 
     // Choose next note
     function chooseNextNote(currentNoteIdx) {
-      const probs = markovChain[currentNoteIdx];
-      let rand = Math.random();
-      let sum = 0;
-      for (let i = 0; i < probs.length; i++) {
-        sum += probs[i];
-        if (rand <= sum) return i;
+      try {
+        const probs = markovChain[currentNoteIdx];
+        let rand = Math.random();
+        let sum = 0;
+        for (let i = 0; i < probs.length; i++) {
+          sum += probs[i];
+          if (rand <= sum) return i;
+        }
+        return 0;
+      } catch (e) {
+        console.error('Choose next note failed:', e);
+        return 0;
       }
-      return 0;
     }
 
     // Sound generation with OSC
@@ -156,6 +169,7 @@
     function playNote(frequency, time) {
       if (!audioCtx) {
         document.getElementById('status').textContent = 'AudioContext unavailable.';
+        console.error('No AudioContext');
         return;
       }
       try {
@@ -169,7 +183,7 @@
         gainNode.connect(audioCtx.destination);
         oscillator.start(time);
         oscillator.stop(time + noteDuration);
-        
+        console.log(`Playing note: ${frequency}Hz, duration: ${noteDuration}s`);
 
         // Send OSC note
         if (osc && oscConnected) {
@@ -179,30 +193,34 @@
             const velocity = 100;
             osc.send(new OSC.Message('/note', midiNote, velocity, noteDuration));
             logOscMessage(`Sent /note ${midiNote} ${velocity} ${noteDuration}`);
-            
+            console.log(`OSC /note: ${midiNote}, ${velocity}, ${noteDuration}s`);
             setTimeout(() => {
               osc.send(new OSC.Message('/note', midiNote, 0, noteDuration));
               logOscMessage(`Sent /note ${midiNote} 0 ${noteDuration}`);
-              
+              console.log(`OSC /note: ${midiNote}, 0, ${noteDuration}s`);
             }, noteDuration * 1000);
           }
         }
       } catch (e) {
         document.getElementById('status').textContent = 'Error playing sound.';
-        
+        console.error('Error playing note:', e);
       }
     }
 
     // Send OSC CC
     function sendControlChanges(motionFactor, duration) {
       if (osc && oscConnected) {
-        const ccTempo = motionFactor * 127;
-        const ccDuration = (duration - 0.5) / 2 * 127;
-        osc.send(new OSC.Message('/cc/20', ccTempo));
-        osc.send(new OSC.Message('/cc/21', ccDuration));
-        logOscMessage(`Sent /cc/20 ${ccTempo.toFixed(0)}`);
-        logOscMessage(`Sent /cc/21 ${ccDuration.toFixed(0)}`);
-        
+        try {
+          const ccTempo = motionFactor * 127;
+          const ccDuration = (duration - 0.5) / 2 * 127;
+          osc.send(new OSC.Message('/cc/20', ccTempo));
+          osc.send(new OSC.Message('/cc/21', ccDuration));
+          logOscMessage(`Sent /cc/20 ${ccTempo.toFixed(0)}`);
+          logOscMessage(`Sent /cc/21 ${ccDuration.toFixed(0)}`);
+          console.log(`OSC /cc/20: ${ccTempo.toFixed(0)}, /cc/21: ${ccDuration.toFixed(0)}`);
+        } catch (e) {
+          console.error('Error sending CC:', e);
+        }
       }
     }
 
@@ -210,13 +228,17 @@
     const canvas = document.getElementById('visualizer');
     const ctx = canvas.getContext('2d');
     function drawVisualizer(noteIdx, motionFactor, scaleName, waveform, duration, isTouching, bpm) {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = `hsl(${noteIdx * 360 / currentScale.length}, 70%, 50%)`;
-      ctx.fillRect(0, 0, canvas.width * motionFactor, canvas.height);
-      ctx.fillStyle = 'black';
-      ctx.font = '12px Arial';
-      const touchText = isTouching ? 'Touch: On' : 'Touch: Off';
-      ctx.fillText(`${scaleName} | ${waveform} | Dur: ${duration.toFixed(2)}s | ${touchText} | BPM: ${bpm.toFixed(0)}`, 10, 20);
+      try {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = `hsl(${noteIdx * 360 / currentScale.length}, 70%, 50%)`;
+        ctx.fillRect(0, 0, canvas.width * motionFactor, canvas.height);
+        ctx.fillStyle = 'black';
+        ctx.font = '12px Arial';
+        const touchText = isTouching ? 'Touch: On' : 'Touch: Off';
+        ctx.fillText(`${scaleName} | ${waveform} | Dur: ${duration.toFixed(2)}s | ${touchText} | BPM: ${bpm.toFixed(0)}`, 10, 20);
+      } catch (e) {
+        console.error('Visualizer error:', e);
+      }
     }
 
     // Device motion
@@ -224,15 +246,20 @@
     function handleMotion(event) {
       if (!event.accelerationIncludingGravity) {
         document.getElementById('status').textContent = 'Motion data unavailable.';
+        console.error('No motion data');
         return;
       }
-      const { x, y, z } = event.accelerationIncludingGravity;
-      const magnitude = Math.sqrt(x * x + y * y * z * z);
-      motionFactor = (magnitude - 9.8) / 5;
-      motionFactor = Math.min(Math.max(motionFactor, 0), 1);
-      const bpm = 20 + motionFactor * (200 - 20);
-      sendControlChanges(motionFactor, noteDuration);
-      
+      try {
+        const { x, y, z } = event.accelerationIncludingGravity;
+        const magnitude = Math.sqrt(x * x + y * y + z * z);
+        motionFactor = (magnitude - 9.8) / 5;
+        motionFactor = Math.min(Math.max(motionFactor, 0), 1);
+        const bpm = 20 + motionFactor * (200 - 20);
+        sendControlChanges(motionFactor, noteDuration);
+        console.log(`Motion: ${motionFactor.toFixed(2)}, BPM: ${bpm.toFixed(0)}`);
+      } catch (e) {
+        console.error('Motion handler error:', e);
+      }
     }
 
     // Device orientation
@@ -240,34 +267,39 @@
     function handleOrientation(event) {
       if (!event.beta || !event.alpha) {
         document.getElementById('status').textContent = 'Orientation data unavailable.';
+        console.error('No orientation data');
         return;
       }
-      const beta = event.beta;
-      if (beta < -45) {
-        currentScale = scales.minorPent;
-        currentScaleName = 'Minor Pent';
-      } else if (beta < 0) {
-        currentScale = scales.minor;
-        currentScaleName = 'Minor';
-      } else if (beta < 45) {
-        currentScale = scales.major;
-        currentScaleName = 'Major';
-      } else {
-        currentScale = scales.majorPent;
-        currentScaleName = 'Major Pent';
-      }
-      markovChain = Array(currentScale.length).fill().map(() => 
-        Array(currentScale.length).fill(1 / currentScale.length)
-      );
-      const alpha = event.alpha;
-      if (alpha < 90) {
-        currentWaveform = 'sine';
-      } else if (alpha < 180) {
-        currentWaveform = 'square';
-      } else if (alpha < 270) {
-        currentWaveform = 'triangle';
-      } else {
-        currentWaveform = 'sawtooth';
+      try {
+        const beta = event.beta;
+        if (beta < -45) {
+          currentScale = scales.minorPent;
+          currentScaleName = 'Minor Pent';
+        } else if (beta < 0) {
+          currentScale = scales.minor;
+          currentScaleName = 'Minor';
+        } else if (beta < 45) {
+          currentScale = scales.major;
+          currentScaleName = 'Major';
+        } else {
+          currentScale = scales.majorPent;
+          currentScaleName = 'Major Pent';
+        }
+        markovChain = Array(currentScale.length).fill().map(() => 
+          Array(currentScale.length).fill(1 / currentScale.length)
+        );
+        const alpha = event.alpha;
+        if (alpha < 90) {
+          currentWaveform = 'sine';
+        } else if (alpha < 180) {
+          currentWaveform = 'square';
+        } else if (alpha < 270) {
+          currentWaveform = 'triangle';
+        } else {
+          currentWaveform = 'sawtooth';
+        }
+      } catch (e) {
+        console.error('Orientation handler error:', e);
       }
     }
 
@@ -279,119 +311,144 @@
         isTouching = true;
         noteDuration = 0.5;
         sendControlChanges(motionFactor, noteDuration);
-        
+        console.log('Touch started, duration: 0.5s');
       });
       document.body.addEventListener('touchend', (e) => {
         e.preventDefault();
         isTouching = false;
         noteDuration = 2.5;
         sendControlChanges(motionFactor, noteDuration);
-        
+        console.log('Touch ended, duration: 2.5s');
       });
       document.body.addEventListener('touchcancel', (e) => {
         e.preventDefault();
         isTouching = false;
         noteDuration = 2.5;
         sendControlChanges(motionFactor, noteDuration);
-        
+        console.log('Touch cancelled, duration: 2.5s');
       });
     }
 
     // Toggle duration
     const toggleDurationBtn = document.getElementById('toggleDurationBtn');
     toggleDurationBtn.addEventListener('click', () => {
-      if (noteDuration === 0.5) {
-        noteDuration = 2.5;
-        toggleDurationBtn.textContent = 'Toggle Duration (2.5s)';
-        
-      } else {
-        noteDuration = 0.5;
-        toggleDurationBtn.textContent = 'Toggle Duration (0.5s)';
-        
+      try {
+        if (noteDuration === 0.5) {
+          noteDuration = 2.5;
+          toggleDurationBtn.textContent = 'Toggle Duration (2.5s)';
+          console.log('Toggle button: duration set to 2.5s');
+        } else {
+          noteDuration = 0.5;
+          toggleDurationBtn.textContent = 'Toggle Duration (0.5s)';
+          console.log('Toggle button: duration set to 0.5s');
+        }
+        sendControlChanges(motionFactor, noteDuration);
+      } catch (e) {
+        console.error('Toggle duration error:', e);
       }
-      sendControlChanges(motionFactor, noteDuration);
     });
 
     // Calculate delay
     function getNoteDelay(motionFactor) {
-      const minBPM = 20;
-      const maxBPM = 200;
-      const minDelay = 60000 / maxBPM;
-      const maxDelay = 60000 / minBPM;
-      return maxDelay - (maxDelay - minDelay) * motionFactor;
+      try {
+        const minBPM = 20;
+        const maxBPM = 200;
+        const minDelay = 60000 / maxBPM;
+        const maxDelay = 60000 / minBPM;
+        return maxDelay - (maxDelay - minDelay) * motionFactor;
+      } catch (e) {
+        console.error('Delay calculation error:', e);
+        return 60000 / 20; // Fallback
+      }
     }
 
     // Sequencer loop
     let currentNoteIdx = 0;
     function sequencerLoop() {
       if (!isPlaying) return;
-      updateMarkovChain();
-      currentNoteIdx = chooseNextNote(currentNoteIdx % currentScale.length);
-      playNote(currentScale[currentNoteIdx], audioCtx.currentTime);
-      const bpm = 20 + motionFactor * (200 - 20);
-      drawVisualizer(currentNoteIdx, motionFactor, currentScaleName, currentWaveform, noteDuration, isTouching, bpm);
-      const delay = getNoteDelay(motionFactor);
-      setTimeout(sequencerLoop, delay);
+      try {
+        updateMarkovChain();
+        currentNoteIdx = chooseNextNote(currentNoteIdx % currentScale.length);
+        playNote(currentScale[currentNoteIdx], audioCtx.currentTime);
+        const bpm = 20 + motionFactor * (200 - 20);
+        drawVisualizer(currentNoteIdx, motionFactor, currentScaleName, currentWaveform, noteDuration, isTouching, bpm);
+        const delay = getNoteDelay(motionFactor);
+        setTimeout(sequencerLoop, delay);
+      } catch (e) {
+        console.error('Sequencer loop error:', e);
+        document.getElementById('status').textContent = 'Sequencer error. Restart.';
+        isPlaying = false;
+        document.getElementById('startBtn').textContent = 'Start';
+      }
     }
 
     // Start button
     document.getElementById('startBtn').addEventListener('click', async () => {
-      if (!audioCtx) {
-        document.getElementById('status').textContent = 'Audio not available.';
-        return;
-      }
-      if (audioCtx.state === 'suspended') {
-        try {
-          await audioCtx.resume();
-          
-        } catch (e) {
-          document.getElementById('status').textContent = 'Failed to start audio.';
-          
+      try {
+        if (!audioCtx) {
+          document.getElementById('status').textContent = 'Audio not available.';
+          console.error('No AudioContext');
           return;
         }
-      }
-      if (!isPlaying) {
-        isPlaying = true;
-        setupTouchControls();
-        sequencerLoop();
-        document.getElementById('startBtn').textContent = 'Stop';
-      } else {
-        isPlaying = false;
-        document.getElementById('status').textContent = '';
-        document.getElementById('startBtn').textContent = 'Start';
+        if (audioCtx.state === 'suspended') {
+          await audioCtx.resume();
+          console.log('AudioContext resumed:', audioCtx.state);
+        }
+        if (!isPlaying) {
+          isPlaying = true;
+          setupTouchControls();
+          sequencerLoop();
+          document.getElementById('startBtn').textContent = 'Stop';
+          console.log('Sequencer started');
+        } else {
+          isPlaying = false;
+          document.getElementById('status').textContent = '';
+          document.getElementById('startBtn').textContent = 'Start';
+          console.log('Sequencer stopped');
+        }
+      } catch (e) {
+        document.getElementById('status').textContent = 'Failed to start sequencer.';
+        console.error('Start button error:', e);
       }
     });
 
     // Permissions
-    if (typeof DeviceMotionEvent.requestPermission === 'function' || 
-        typeof DeviceOrientationEvent.requestPermission === 'function') {
-      document.getElementById('startBtn').addEventListener('click', async () => {
-        const motionPromise = typeof DeviceMotionEvent.requestPermission === 'function' 
-          ? DeviceMotionEvent.requestPermission() 
+    async function requestPermissions() {
+      try {
+        const motionPromise = typeof DeviceMotionEvent.requestPermission === 'function'
+          ? DeviceMotionEvent.requestPermission()
           : Promise.resolve('granted');
-        const orientationPromise = typeof DeviceOrientationEvent.requestPermission === 'function' 
-          ? DeviceOrientationEvent.requestPermission() 
+        const orientationPromise = typeof DeviceOrientationEvent.requestPermission === 'function'
+          ? DeviceOrientationEvent.requestPermission()
           : Promise.resolve('granted');
-        try {
-          const [motionState, orientationState] = await Promise.all([motionPromise, orientationPromise]);
-          if (motionState === 'granted') {
-            window.addEventListener('devicemotion', handleMotion);
-          } else {
-            document.getElementById('status').textContent += ' Motion permission denied.';
-          }
-          if (orientationState === 'granted') {
-            window.addEventListener('deviceorientation', handleOrientation);
-          } else {
-            document.getElementById('status').textContent += ' Orientation permission denied.';
-          }
-        } catch (e) {
-          document.getElementById('status').textContent = 'Failed to access sensors.';
-          
+        const [motionState, orientationState] = await Promise.all([motionPromise, orientationPromise]);
+        if (motionState === 'granted') {
+          window.addEventListener('devicemotion', handleMotion);
+          console.log('Motion permission granted');
+        } else {
+          document.getElementById('status').textContent += ' Motion permission denied.';
+          console.warn('Motion permission denied');
         }
-      });
-    } else {
+        if (orientationState === 'granted') {
+          window.addEventListener('deviceorientation', handleOrientation);
+          console.log('Orientation permission granted');
+        } else {
+          document.getElementById('status').textContent += ' Orientation permission denied.';
+          console.warn('Orientation permission denied');
+        }
+      } catch (e) {
+        document.getElementById('status').textContent = 'Failed to access sensors.';
+        console.error('Permission error:', e);
+      }
+    }
+
+    document.getElementById('startBtn').addEventListener('click', requestPermissions);
+
+    // Initialize
+    if (!DeviceMotionEvent.requestPermission && !DeviceOrientationEvent.requestPermission) {
       window.addEventListener('devicemotion', handleMotion);
       window.addEventListener('deviceorientation', handleOrientation);
+      console.log('No permission request needed');
     }
   </script>
 </body>
