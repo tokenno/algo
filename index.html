@@ -33,7 +33,7 @@
 </head>
 <body>
   <h1>Stochastic Sequencer</h1>
-  <p>Tilt your device to influence the sequence and speed (20-200 BPM). Click "Start" to begin.</p>
+  <p>Tilt front-to-back to change scales (Major, Minor, Pentatonic). Shake for speed (20-200 BPM). Click "Start" to begin.</p>
   <button id="startBtn">Start</button>
   <div id="status"></div>
   <canvas id="visualizer" width="300" height="100"></canvas>
@@ -48,24 +48,29 @@
     }
     let isPlaying = false;
 
-    // Markov chain for note transitions
-    const notes = [261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88]; // C4 to B4
-    const markovChain = Array(notes.length).fill().map(() => 
-      Array(notes.length).fill(1 / notes.length)
-    ); // Uniform initial probabilities
+    // Scale definitions
+    const scales = {
+      major: [261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88], // C4 Major
+      minor: [261.63, 293.66, 311.13, 349.23, 392.00, 415.30, 466.16], // C4 Natural Minor
+      majorPent: [261.63, 293.66, 329.63, 392.00, 440.00], // C4 Major Pentatonic
+      minorPent: [261.63, 311.13, 349.23, 392.00, 466.16] // C4 Minor Pentatonic
+    };
+    let currentScale = scales.major;
+    let markovChain = Array(currentScale.length).fill().map(() => 
+      Array(currentScale.length).fill(1 / currentScale.length)
+    );
 
     // Update Markov chain based on fractal-like probability
-    function updateMarkovChain(motionFactor) {
-      for (let i = 0; i < notes.length; i++) {
+    function updateMarkovChain() {
+      for (let i = 0; i < currentScale.length; i++) {
         let row = markovChain[i];
         let total = 0;
-        for (let j = 0; j < notes.length; j++) {
-          // Fractal-inspired: use motion factor to skew probabilities
-          row[j] = Math.random() * (1 + motionFactor);
+        for (let j = 0; j < currentScale.length; j++) {
+          row[j] = Math.random(); // Random transitions
           total += row[j];
         }
         // Normalize probabilities
-        for (let j = 0; j < notes.length; j++) {
+        for (let j = 0; j < currentScale.length; j++) {
           row[j] /= total;
         }
       }
@@ -106,13 +111,17 @@
     // Visualizer setup
     const canvas = document.getElementById('visualizer');
     const ctx = canvas.getContext('2d');
-    function drawVisualizer(noteIdx, motionFactor) {
+    function drawVisualizer(noteIdx, motionFactor, scaleName) {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = `hsl(${noteIdx * 360 / notes.length}, 70%, 50%)`;
+      ctx.fillStyle = `hsl(${noteIdx * 360 / currentScale.length}, 70%, 50%)`;
       ctx.fillRect(0, 0, canvas.width * motionFactor, canvas.height);
+      // Display scale name
+      ctx.fillStyle = 'black';
+      ctx.font = '12px Arial';
+      ctx.fillText(scaleName, 10, 20);
     }
 
-    // Device motion handling
+    // Device motion handling (for speed)
     let motionFactor = 0;
     function handleMotion(event) {
       if (!event.accelerationIncludingGravity) {
@@ -120,8 +129,37 @@
         return;
       }
       const { x, y, z } = event.accelerationIncludingGravity;
-      motionFactor = Math.sqrt(x * x + y * y + z * z) / 20; // Normalize
+      motionFactor = Math.sqrt(x * x + y * y + z * z) / 15; // Reduced for faster response
       motionFactor = Math.min(Math.max(motionFactor, 0), 1); // Clamp
+      motionFactor = motionFactor * motionFactor; // Quadratic for sensitivity
+    }
+
+    // Device orientation handling (for scale)
+    let currentScaleName = 'Major';
+    function handleOrientation(event) {
+      if (!event.beta) {
+        document.getElementById('status').textContent = 'Orientation data unavailable.';
+        return;
+      }
+      const beta = event.beta; // -90 to 90 degrees
+      // Map beta to scale: -90 to 90 -> 4 scales
+      if (beta < -45) {
+        currentScale = scales.minorPent;
+        currentScaleName = 'Minor Pent';
+      } else if (beta < 0) {
+        currentScale = scales.minor;
+        currentScaleName = 'Minor';
+      } else if (beta < 45) {
+        currentScale = scales.major;
+        currentScaleName = 'Major';
+      } else {
+        currentScale = scales.majorPent;
+        currentScaleName = 'Major Pent';
+      }
+      // Update Markov chain for new scale
+      markovChain = Array(currentScale.length).fill().map(() => 
+        Array(currentScale.length).fill(1 / currentScale.length)
+      );
     }
 
     // Calculate delay from motionFactor (20 BPM to 200 BPM)
@@ -130,7 +168,6 @@
       const maxBPM = 200;
       const minDelay = 60000 / maxBPM; // 300ms for 200 BPM
       const maxDelay = 60000 / minBPM; // 3000ms for 20 BPM
-      // Linearly map motionFactor (0 to 1) to delay (3000ms to 300ms)
       return maxDelay - (maxDelay - minDelay) * motionFactor;
     }
 
@@ -138,10 +175,10 @@
     let currentNoteIdx = 0;
     function sequencerLoop() {
       if (!isPlaying) return;
-      updateMarkovChain(motionFactor);
-      currentNoteIdx = chooseNextNote(currentNoteIdx);
-      playNote(notes[currentNoteIdx], audioCtx.currentTime);
-      drawVisualizer(currentNoteIdx, motionFactor);
+      updateMarkovChain();
+      currentNoteIdx = chooseNextNote(currentNoteIdx % currentScale.length); // Handle scale length changes
+      playNote(currentScale[currentNoteIdx], audioCtx.currentTime);
+      drawVisualizer(currentNoteIdx, motionFactor, currentScaleName);
       const delay = getNoteDelay(motionFactor);
       setTimeout(sequencerLoop, delay);
     }
@@ -171,24 +208,38 @@
       }
     });
 
-    // Request device motion permission (iOS 13+)
-    if (typeof DeviceMotionEvent.requestPermission === 'function') {
+    // Request device motion and orientation permissions (iOS 13+)
+    if (typeof DeviceMotionEvent.requestPermission === 'function' || 
+        typeof DeviceOrientationEvent.requestPermission === 'function') {
       document.getElementById('startBtn').addEventListener('click', () => {
-        DeviceMotionEvent.requestPermission()
-          .then(permissionState => {
-            if (permissionState === 'granted') {
+        const motionPromise = typeof DeviceMotionEvent.requestPermission === 'function' 
+          ? DeviceMotionEvent.requestPermission() 
+          : Promise.resolve('granted');
+        const orientationPromise = typeof DeviceOrientationEvent.requestPermission === 'function' 
+          ? DeviceOrientationEvent.requestPermission() 
+          : Promise.resolve('granted');
+        
+        Promise.all([motionPromise, orientationPromise])
+          .then(([motionState, orientationState]) => {
+            if (motionState === 'granted') {
               window.addEventListener('devicemotion', handleMotion);
             } else {
-              document.getElementById('status').textContent = 'Motion permission denied.';
+              document.getElementById('status').textContent += ' Motion permission denied.';
+            }
+            if (orientationState === 'granted') {
+              window.addEventListener('deviceorientation', handleOrientation);
+            } else {
+              document.getElementById('status').textContent += ' Orientation permission denied.';
             }
           })
           .catch(e => {
-            console.error('Motion permission error:', e);
-            document.getElementById('status').textContent = 'Failed to access motion sensors.';
+            console.error('Permission error:', e);
+            document.getElementById('status').textContent = 'Failed to access sensors.';
           });
       });
     } else {
       window.addEventListener('devicemotion', handleMotion);
+      window.addEventListener('deviceorientation', handleOrientation);
     }
   </script>
 </body>
