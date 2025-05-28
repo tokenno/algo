@@ -48,208 +48,238 @@
     }
     let isPlaying = false;
 
-    // Scale definitions
-    const scales = {
-      major: [261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88], // C4 Major
-      minor: [261.63, 293.66, 311.13, 349.23, 392.00, 415.30, 466.16], // C4 Natural Minor
-      majorPent: [261.63, 293.66, 329.63, 392.00, 440.00], // C4 Major Pentatonic
-      minorPent: [261.63, 311.13, 349.23, 392.00, 466.16] // C4 Minor Pentatonic
-    };
-    let currentScale = scales.major;
-    let markovChain = Array(currentScale.length).fill().map(() => 
-      Array(currentScale.length).fill(1 / currentScale.length)
-    );
+   <button id="startBtn">Start</button>
+<canvas id="visualizer" width="300" height="100"></canvas> <script> // Web Audio API setup let audioCtx; try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { document.getElementById('status').textContent = 'Web Audio API not supported in this browser.'; console.error('AudioContext creation failed:', e); } let isPlaying = false;
+// Scale definitions
+const scales = {
+major: [261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88], // C4 Major
+minor: [261.63, 293.66, 311.13, 349.23, 392.00, 415.30, 466.16], // C4 Natural Minor
+majorPent: [261.63, 293.66, 329.63, 392.00, 440.00], // C4 Major Pentatonic
+minorPent: [261.63, 311.13, 349.23, 392.00, 466.16] // C4 Minor Pentatonic
+};
+let currentScale = scales.major;
+let markovChain = Array(currentScale.length).fill().map(() =>
+Array(currentScale.length).fill(1 / currentScale.length)
+);
 
-    // Update Markov chain based on fractal-like probability
-    function updateMarkovChain() {
-      for (let i = 0; i < currentScale.length; i++) {
-        let row = markovChain[i];
-        let total = 0;
-        for (let j = 0; j < currentScale.length; j++) {
-          row[j] = Math.random();
-          total += row[j];
-        }
-        for (let j = 0; j < currentScale.length; j++) {
-          row[j] /= total;
-        }
-      }
-    }
+// Update Markov chain based on fractal-like probability
+function updateMarkovChain() {
+for (let i = 0; i < currentScale.length; i++) {
+let row = markovChain[i];
+let total = 0;
+for (let j = 0; j < currentScale.length; j++) {
+row[j] = Math.random();
+total += row[j];
+}
+for (let j = 0; j < currentScale.length; j++) {
+row[j] /= total;
+}
+}
+}
 
-    // Choose next note based on Markov chain
-    function chooseNextNote(currentNoteIdx) {
-      const probs = markovChain[currentNoteIdx];
-      let rand = Math.random();
-      let sum = 0;
-      for (let i = 0; i < probs.length; i++) {
-        sum += probs[i];
-        if (rand <= sum) return i;
-      }
-      return 0;
-    }
+// Choose next note based on Markov chain
+function chooseNextNote(currentNoteIdx) {
+const probs = markovChain[currentNoteIdx];
+let rand = Math.random();
+let sum = 0;
+for (let i = 0; i < probs.length; i++) {
+sum += probs[i];
+if (rand <= sum) return i;
+}
+return 0;
+}
 
-    // Sound generation
-    let currentWaveform = 'sine';
-    function playNote(frequency, time) {
-      if (!audioCtx) return;
-      try {
-        const oscillator = audioCtx.createOscillator();
-        const gainNode = audioCtx.createGain();
-        oscillator.type = currentWaveform; // Updated to use dynamic waveform
-        oscillator.frequency.setValueAtTime(frequency, audioCtx.currentTime);
-        gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
-        oscillator.connect(gainNode);
-        gainNode.connect(audioCtx.destination);
-        oscillator.start(time);
-        oscillator.stop(time + 0.5);
-      } catch (e) {
-        console.error('Error playing note:', e);
-        document.getElementById('status').textContent = 'Error playing sound.';
-      }
-    }
+// Sound generation
+let currentWaveform = 'sine';
+let noteDuration = 0.5; // Default duration (fallback)
+function playNote(frequency, time) {
+if (!audioCtx) return;
+try {
+const oscillator = audioCtx.createOscillator();
+const gainNode = audioCtx.createGain();
+oscillator.type = currentWaveform;
+oscillator.frequency.setValueAtTime(frequency, audioCtx.currentTime);
+gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime);
+gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + noteDuration);
+oscillator.connect(gainNode);
+gainNode.connect(audioCtx.destination);
+oscillator.start(time);
+oscillator.stop(time + noteDuration);
+} catch (e) {
+console.error('Error playing note:', e);
+document.getElementById('status').textContent = 'Error playing sound.';
+}
+}
 
-    // Visualizer setup
-    const canvas = document.getElementById('visualizer');
-    const ctx = canvas.getContext('2d');
-    function drawVisualizer(noteIdx, motionFactor, scaleName, waveform) {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = `hsl(${noteIdx * 360 / currentScale.length}, 70%, 50%)`;
-      ctx.fillRect(0, 0, canvas.width * motionFactor, canvas.height);
-      ctx.fillStyle = 'black';
-      ctx.font = '12px Arial';
-      ctx.fillText(`${scaleName} | ${waveform}`, 10, 20);
-    }
+// Visualizer setup
+const canvas = document.getElementById('visualizer');
+const ctx = canvas.getContext('2d');
+function drawVisualizer(noteIdx, motionFactor, scaleName, waveform, duration) {
+ctx.clearRect(0, 0, canvas.width, canvas.height);
+ctx.fillStyle = hsl(${noteIdx * 360 / currentScale.length}, 70%, 50%);
+ctx.fillRect(0, 0, canvas.width * motionFactor, canvas.height);
+ctx.fillStyle = 'black';
+ctx.font = '12px Arial';
+ctx.fillText(${scaleName} | ${waveform} | Dur: ${duration.toFixed(2)}s, 10, 20);
+}
 
-    // Device motion handling (for speed)
-    let motionFactor = 0;
-    function handleMotion(event) {
-      if (!event.accelerationIncludingGravity) {
-        document.getElementById('status').textContent = 'Motion data unavailable.';
-        return;
-      }
-      const { x, y, z } = event.accelerationIncludingGravity;
-      motionFactor = Math.sqrt(x * x + y * y + z * z) / 15;
-      motionFactor = Math.min(Math.max(motionFactor, 0), 1);
-      motionFactor = motionFactor * motionFactor;
-    }
+// Device motion handling (for speed)
+let motionFactor = 0;
+function handleMotion(event) {
+if (!event.accelerationIncludingGravity) {
+document.getElementById('status').textContent = 'Motion data unavailable.';
+return;
+}
+const { x, y, z } = event.accelerationIncludingGravity;
+motionFactor = Math.sqrt(x * x + y * y + z * z) / 15;
+motionFactor = Math.min(Math.max(motionFactor, 0), 1);
+motionFactor = motionFactor * motionFactor;
+}
 
-    // Device orientation handling (for scale and waveform)
-    let currentScaleName = 'Major';
-    function handleOrientation(event) {
-      if (!event.beta || !event.alpha) {
-        document.getElementById('status').textContent = 'Orientation data unavailable.';
-        return;
-      }
-      // Scale selection (beta)
-      const beta = event.beta;
-      if (beta < -45) {
-        currentScale = scales.minorPent;
-        currentScaleName = 'Minor Pent';
-      } else if (beta < 0) {
-        currentScale = scales.minor;
-        currentScaleName = 'Minor';
-      } else if (beta < 45) {
-        currentScale = scales.major;
-        currentScaleName = 'Major';
-      } else {
-        currentScale = scales.majorPent;
-        currentScaleName = 'Major Pent';
-      }
-      markovChain = Array(currentScale.length).fill().map(() => 
-        Array(currentScale.length).fill(1 / currentScale.length)
-      );
-      // Waveform selection (alpha)
-      const alpha = event.alpha;
-      if (alpha < 90) {
-        currentWaveform = 'sine';
-      } else if (alpha < 180) {
-        currentWaveform = 'square';
-      } else if (alpha < 270) {
-        currentWaveform = 'triangle';
-      } else {
-        currentWaveform = 'sawtooth';
-      }
-    }
+// Device orientation handling (for scale and waveform)
+let currentScaleName = 'Major';
+function handleOrientation(event) {
+if (!event.beta || !event.alpha) {
+document.getElementById('status').textContent = 'Orientation data unavailable.';
+return;
+}
+const beta = event.beta;
+if (beta < -45) {
+currentScale = scales.minorPent;
+currentScaleName = 'Minor Pent';
+} else if (beta < 0) {
+currentScale = scales.minor;
+currentScaleName = 'Minor';
+} else if (beta < 45) {
+currentScale = scales.major;
+currentScaleName = 'Major';
+} else {
+currentScale = scales.majorPent;
+currentScaleName = 'Major Pent';
+}
+markovChain = Array(currentScale.length).fill().map(() =>
+Array(currentScale.length).fill(1 / currentScale.length)
+);
+const alpha = event.alpha;
+if (alpha < 90) {
+currentWaveform = 'sine';
+} else if (alpha < 180) {
+currentWaveform = 'square';
+} else if (alpha < 270) {
+currentWaveform = 'triangle';
+} else {
+currentWaveform = 'sawtooth';
+}
+}
 
-    // Calculate delay from motionFactor (20 BPM to 200 BPM)
-    function getNoteDelay(motionFactor) {
-      const minBPM = 20;
-      const maxBPM = 200;
-      const minDelay = 60000 / maxBPM;
-      const maxDelay = 60000 / minBPM;
-      return maxDelay - (maxDelay - minDelay) * motionFactor;
-    }
+// Proximity sensor handling (for note duration)
+let proximitySupported = false;
+function setupProximitySensor() {
+if ('ProximitySensor' in window) {
+try {
+const sensor = new ProximitySensor();
+sensor.addEventListener('reading', () => {
+proximitySupported = true;
+noteDuration = sensor.near ? 0.2 : 0.8; // Near: 0.2s, Far: 0.8s
+});
+sensor.addEventListener('error', (e) => {
+console.error('Proximity sensor error:', e);
+document.getElementById('status').textContent = 'Proximity sensor error.';
+noteDuration = 0.5; // Fallback
+});
+sensor.start();
+} catch (e) {
+console.error('Failed to initialize ProximitySensor:', e);
+document.getElementById('status').textContent = 'Proximity sensor not supported.';
+noteDuration = 0.5;
+}
+} else {
+document.getElementById('status').textContent = 'Proximity sensor not supported.';
+noteDuration = 0.5;
+}
+}
 
-    // Sequencer loop
-    let currentNoteIdx = 0;
-    function sequencerLoop() {
-      if (!isPlaying) return;
-      updateMarkovChain();
-      currentNoteIdx = chooseNextNote(currentNoteIdx % currentScale.length);
-      playNote(currentScale[currentNoteIdx], audioCtx.currentTime);
-      drawVisualizer(currentNoteIdx, motionFactor, currentScaleName, currentWaveform);
-      const delay = getNoteDelay(motionFactor);
-      setTimeout(sequencerLoop, delay);
-    }
+// Calculate delay from motionFactor (20 BPM to 200 BPM)
+function getNoteDelay(motionFactor) {
+const minBPM = 20;
+const maxBPM = 200;
+const minDelay = 60000 / maxBPM;
+const maxDelay = 60000 / minBPM;
+return maxDelay - (maxDelay - minDelay) * motionFactor;
+}
 
-    // Start button
-    document.getElementById('startBtn').addEventListener('click', async () => {
-      if (!audioCtx) {
-        document.getElementById('status').textContent = 'Audio not available.';
-        return;
-      }
-      if (audioCtx.state === 'suspended') {
-        try {
-          await audioCtx.resume();
-        } catch (e) {
-          console.error('Failed to resume AudioContext:', e);
-          document.getElementById('status').textContent = 'Failed to start audio.';
-          return;
-        }
-      }
-      if (!isPlaying) {
-        isPlaying = true;
-        sequencerLoop();
-        document.getElementById('startBtn').textContent = 'Stop';
-      } else {
-        isPlaying = false;
-        document.getElementById('startBtn').textContent = 'Start';
-      }
-    });
+// Sequencer loop
+let currentNoteIdx = 0;
+function sequencerLoop() {
+if (!isPlaying) return;
+updateMarkovChain();
+currentNoteIdx = chooseNextNote(currentNoteIdx % currentScale.length);
+playNote(currentScale[currentNoteIdx], audioCtx.currentTime);
+drawVisualizer(currentNoteIdx, motionFactor, currentScaleName, currentWaveform, noteDuration);
+const delay = getNoteDelay(motionFactor);
+setTimeout(sequencerLoop, delay);
+}
 
-    // Request device motion and orientation permissions (iOS 13+)
-    if (typeof DeviceMotionEvent.requestPermission === 'function' || 
-        typeof DeviceOrientationEvent.requestPermission === 'function') {
-      document.getElementById('startBtn').addEventListener('click', () => {
-        const motionPromise = typeof DeviceMotionEvent.requestPermission === 'function' 
-          ? DeviceMotionEvent.requestPermission() 
-          : Promise.resolve('granted');
-        const orientationPromise = typeof DeviceOrientationEvent.requestPermission === 'function' 
-          ? DeviceOrientationEvent.requestPermission() 
-          : Promise.resolve('granted');
-        
-        Promise.all([motionPromise, orientationPromise])
-          .then(([motionState, orientationState]) => {
-            if (motionState === 'granted') {
-              window.addEventListener('devicemotion', handleMotion);
-            } else {
-              document.getElementById('status').textContent += ' Motion permission denied.';
-            }
-            if (orientationState === 'granted') {
-              window.addEventListener('deviceorientation', handleOrientation);
-            } else {
-              document.getElementById('status').textContent += ' Orientation permission denied.';
-            }
-          })
-          .catch(e => {
-            console.error('Permission error:', e);
-            document.getElementById('status').textContent = 'Failed to access sensors.';
-          });
-      });
-    } else {
-      window.addEventListener('devicemotion', handleMotion);
-      window.addEventListener('deviceorientation', handleOrientation);
-    }
-  </script>
+// Start button
+document.getElementById('startBtn').addEventListener('click', async () => {
+if (!audioCtx) {
+document.getElementById('status').textContent = 'Audio not available.';
+return;
+}
+if (audioCtx.state === 'suspended') {
+try {
+await audioCtx.resume();
+} catch (e) {
+console.error('Failed to resume AudioContext:', e);
+document.getElementById('status').textContent = 'Failed to start audio.';
+return;
+}
+}
+if (!isPlaying) {
+isPlaying = true;
+setupProximitySensor(); // Initialize proximity sensor
+sequencerLoop();
+document.getElementById('startBtn').textContent = 'Stop';
+} else {
+isPlaying = false;
+document.getElementById('startBtn').textContent = 'Start';
+}
+});
+
+// Request device motion and orientation permissions (iOS 13+)
+if (typeof DeviceMotionEvent.requestPermission === 'function' ||
+typeof DeviceOrientationEvent.requestPermission === 'function') {
+document.getElementById('startBtn').addEventListener('click', () => {
+const motionPromise = typeof DeviceMotionEvent.requestPermission === 'function'
+? DeviceMotionEvent.requestPermission()
+: Promise.resolve('granted');
+const orientationPromise = typeof DeviceOrientationEvent.requestPermission === 'function'
+? DeviceOrientationEvent.requestPermission()
+: Promise.resolve('granted');
+
+Promise.all([motionPromise, orientationPromise])
+.then(([motionState, orientationState]) => {
+if (motionState === 'granted') {
+window.addEventListener('devicemotion', handleMotion);
+} else {
+document.getElementById('status').textContent += ' Motion permission denied.';
+}
+if (orientationState === 'granted') {
+window.addEventListener('deviceorientation', handleOrientation);
+} else {
+document.getElementById('status').textContent += ' Orientation permission denied.';
+}
+})
+.catch(e => {
+console.error('Permission error:', e);
+document.getElementById('status').textContent = 'Failed to access sensors.';
+});
+});
+} else {
+window.addEventListener('devicemotion', handleMotion);
+window.addEventListener('deviceorientation', handleOrientation);
+}
+</script>
+ 
 </body>
 </html>
