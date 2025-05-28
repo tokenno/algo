@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  < paradoxes charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stochastic Sequencer</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      background-color: #f0f0f0;
+      margin: 0;
+      padding: 20px;
+      touch-action: none;
+    }
+    canvas {
+      border: 1px solid #333;
+      background-color: #fff;
+    }
+    button {
+      margin: 10px;
+      padding: 10px 20px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    #status {
+      color: red;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Stochastic Sequencer</h1>
+  <p>Tilt your device to influence the sequence. Click "Start" to begin.</p>
+  <button id="startBtn">Start</button>
+  <div id="status"></div>
+  <canvas id="visualizer" width="300" height="100"></canvas>
+  <script>
+    // Web Audio API setup
+    let audioCtx;
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    } catch (e) {
+      document.getElementById('status').textContent = 'Web Audio API not supported in this browser.';
+      console.error('AudioContext creation failed:', e);
+    }
+    let isPlaying = false;
+
+    // Markov chain for note transitions
+    const notes = [261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88]; // C4 to B4
+    const markovChain = Array(notes.length).fill().map(() => 
+      Array(notes.length).fill(1 / notes.length)
+    ); // Uniform initial probabilities
+
+    // Update Markov chain based on fractal-like probability
+    function updateMarkovChain(motionFactor) {
+      for (let i = 0; i < notes.length; i++) {
+        let row = markovChain[i];
+        let total = 0;
+        for (let j = 0; j < notes.length; j++) {
+          // Fractal-inspired: use motion factor to skew probabilities
+          row[j] = Math.random() * (1 + motionFactor);
+          total += row[j];
+        }
+        // Normalize probabilities
+        for (let j = 0; j < notes.length; j++) {
+          row[j] /= total;
+        }
+      }
+    }
+
+    // Choose next note based on Markov chain
+    function chooseNextNote(currentNoteIdx) {
+      const probs = markovChain[currentNoteIdx];
+      let rand = Math.random();
+      let sum = 0;
+      for (let i = 0; i < probs.length; i++) {
+        sum += probs[i];
+        if (rand <= sum) return i;
+      }
+      return 0; // Fallback
+    }
+
+    // Sound generation
+    function playNote(frequency, time) {
+      if (!audioCtx) return;
+      try {
+        const oscillator = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(frequency, audioCtx.currentTime);
+        gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+        oscillator.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+        oscillator.start(time);
+        oscillator.stop(time + 0.5);
+      } catch (e) {
+        console.error('Error playing note:', e);
+        document.getElementById('status').textContent = 'Error playing sound.';
+      }
+    }
+
+    // Visualizer setup
+    const canvas = document.getElementById('visualizer');
+    const ctx = canvas.getContext('2d');
+    function drawVisualizer(noteIdx, motionFactor) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = `hsl(${noteIdx * 360 / notes.length}, 70%, 50%)`;
+      ctx.fillRect(0, 0, canvas.width * motionFactor, canvas.height);
+    }
+
+    // Device motion handling
+    let motionFactor = 0;
+    function handleMotion(event) {
+      if (!event.accelerationIncludingGravity) {
+        document.getElementById('status').textContent = 'Motion data unavailable.';
+        return;
+      }
+      const { x, y, z } = event.accelerationIncludingGravity;
+      motionFactor = Math.sqrt(x * x + y * y + z * z) / 20; // Normalize
+      motionFactor = Math.min(Math.max(motionFactor, 0), 1); // Clamp
+    }
+
+    // Sequencer loop
+    let currentNoteIdx = 0;
+    function sequencerLoop() {
+      if (!isPlaying) return;
+      updateMarkovChain(motionFactor);
+      currentNoteIdx = chooseNextNote(currentNoteIdx);
+      playNote(notes[currentNoteIdx], audioCtx.currentTime);
+      drawVisualizer(currentNoteIdx, motionFactor);
+      setTimeout(sequencerLoop, 500);
+    }
+
+    // Start button
+    document.getElementById('startBtn').addEventListener('click', async () => {
+      if (!audioCtx) {
+        document.getElementById('status').textContent = 'Audio not available.';
+        return;
+      }
+      if (audioCtx.state === 'suspended') {
+        try {
+          await audioCtx.resume();
+        } catch (e) {
+          console.error('Failed to resume AudioContext:', e);
+          document.getElementById('status').textContent = 'Failed to start audio.';
+          return;
+        }
+      }
+      if (!isPlaying) {
+        isPlaying = true;
+        sequencerLoop();
+        document.getElementById('startBtn').textContent = 'Stop';
+      } else {
+        isPlaying = false;
+        document.getElementById('startBtn').textContent = 'Start';
+      }
+    });
+
+    // Request device motion permission (iOS 13+)
+    if (typeof DeviceMotionEvent.requestPermission === 'function') {
+      document.getElementById('startBtn').addEventListener('click', () => {
+        DeviceMotionEvent.requestPermission()
+          .then(permissionState => {
+            if (permissionState === 'granted') {
+              window.addEventListener('devicemotion', handleMotion);
+            } else {
+              document.getElementById('status').textContent = 'Motion permission denied.';
+            }
+          })
+          .catch(e => {
+            console.error('Motion permission error:', e);
+            document.getElementById('status').textContent = 'Failed to access motion sensors.';
+          });
+      });
+    } else {
+      window.addEventListener('devicemotion', handleMotion);
+    }
+  </script>
+</body>
+</html>
+
