@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Stochastic Sequencer with MIDI</title>
+  <title>Stochastic Sequencer with Wireless OSC</title>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -31,10 +31,11 @@
       text-align: center;
     }
   </style>
+  <script src="https://cdn.jsdelivr.net/npm/osc-js@2.4.0/dist/osc.min.js"></script>
 </head>
 <body>
   <h1>Stochastic Sequencer</h1>
-  <p>Tilt front-to-back for scales, rotate for waveform, tilt gently for speed (20-200 BPM), tap/hold screen or use toggle for note duration. Sends MIDI to DAW. Click "Start" to begin.</p>
+  <p>Tilt front-to-back for scales, rotate for waveform, tilt gently for speed (20-200 BPM), tap/hold screen or use toggle for note duration. Sends OSC to DAW wirelessly. Click "Start" to begin.</p>
   <button id="startBtn">Start</button>
   <button id="toggleDurationBtn">Toggle Duration (2.5s)</button>
   <div id="status"></div>
@@ -50,25 +51,22 @@
     }
     let isPlaying = false;
 
-    // Web MIDI setup
-    let midiAccess = null;
-    let midiOutput = null;
-    navigator.requestMIDIAccess().then(
-      (access) => {
-        midiAccess = access;
-        midiOutput = Array.from(midiAccess.outputs.values())[0];
-        if (!midiOutput) {
-          document.getElementById('status').textContent += ' No MIDI output devices found.';
-          console.error('No MIDI outputs available.');
-        } else {
-          console.log('MIDI output:', midiOutput.name);
-        }
-      },
-      (err) => {
-        document.getElementById('status').textContent += ' Web MIDI access denied.';
-        console.error('Failed to access MIDI:', err);
-      }
-    );
+    // OSC setup
+    let osc = null;
+    try {
+      osc = new OSC({ plugin: new OSC.WebsocketClientPlugin({ host: '192.168.1.145', port: 8000 }) });
+      osc.open();
+      osc.on('open', () => {
+        console.log('OSC connected to 192.168.1.145:8000');
+      });
+      osc.on('error', (err) => {
+        document.getElementById('status').textContent += ' OSC connection failed.';
+        console.error('OSC error:', err);
+      });
+    } catch (e) {
+      document.getElementById('status').textContent += ' OSC initialization failed.';
+      console.error('OSC init failed:', e);
+    }
 
     // Scale definitions
     const scales = {
@@ -109,7 +107,7 @@
       return 0;
     }
 
-    // Sound generation with MIDI
+    // Sound generation with OSC
     let currentWaveform = 'sine';
     let noteDuration = 1.0;
     function playNote(frequency, time) {
@@ -130,17 +128,17 @@
         oscillator.stop(time + noteDuration);
         console.log(`Playing note: ${frequency}Hz, duration: ${noteDuration}s`);
 
-        // Send MIDI note
-        if (midiOutput) {
+        // Send OSC note
+        if (osc) {
           const noteIdx = currentScale.indexOf(frequency);
           if (noteIdx !== -1) {
-            const midiNote = 60 + noteIdx; // C4 + scale offset
+            const midiNote = 60 + noteIdx;
             const velocity = 100;
-            midiOutput.send([0x90, midiNote, velocity]); // Note on
+            osc.send(new OSC.Message('/note', midiNote, velocity, noteDuration));
+            console.log(`OSC /note: ${midiNote}, ${velocity}, ${noteDuration}s`);
             setTimeout(() => {
-              midiOutput.send([0x80, midiNote, 0]); // Note off
+              osc.send(new OSC.Message('/note', midiNote, 0, noteDuration));
             }, noteDuration * 1000);
-            console.log(`MIDI Note: ${midiNote}, Duration: ${noteDuration}s`);
           }
         }
       } catch (e) {
@@ -149,14 +147,14 @@
       }
     }
 
-    // Send MIDI CC for motionFactor and noteDuration
+    // Send OSC CC
     function sendControlChanges(motionFactor, duration) {
-      if (midiOutput) {
-        const ccTempo = Math.round(motionFactor * 127); // CC 20 for tempo
-        const ccDuration = Math.round((duration - 0.5) / 2 * 127); // CC 21 for duration (0.5-2.5s)
-        midiOutput.send([0xB0, 20, ccTempo]);
-        midiOutput.send([0xB0, 21, ccDuration]);
-        console.log(`MIDI CC 20: ${ccTempo}, CC 21: ${ccDuration}`);
+      if (osc) {
+        const ccTempo = motionFactor * 127;
+        const ccDuration = (duration - 0.5) / 2 * 127;
+        osc.send(new OSC.Message('/cc/20', ccTempo));
+        osc.send(new OSC.Message('/cc/21', ccDuration));
+        console.log(`OSC /cc/20: ${ccTempo.toFixed(0)}, /cc/21: ${ccDuration.toFixed(0)}`);
       }
     }
 
@@ -173,7 +171,7 @@
       ctx.fillText(`${scaleName} | ${waveform} | Dur: ${duration.toFixed(2)}s | ${touchText} | BPM: ${bpm.toFixed(0)}`, 10, 20);
     }
 
-    // Device motion (speed, 20 BPM at rest)
+    // Device motion
     let motionFactor = 0;
     function handleMotion(event) {
       if (!event.accelerationIncludingGravity) {
@@ -189,7 +187,7 @@
       console.log(`Motion: ${motionFactor.toFixed(2)}, BPM: ${bpm.toFixed(0)}`);
     }
 
-    // Device orientation (scale, waveform)
+    // Device orientation
     let currentScaleName = 'Major';
     function handleOrientation(event) {
       if (!event.beta || !event.alpha) {
