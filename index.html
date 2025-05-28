@@ -33,7 +33,7 @@
 </head>
 <body>
   <h1>Stochastic Sequencer</h1>
-  <p>Tilt front-to-back to change scales (Major, Minor, Pentatonic). Shake for speed (20-200 BPM). Click "Start" to begin.</p>
+  <p>Tilt front-to-back for scales, rotate for waveform, shake for speed (20-200 BPM). Click "Start" to begin.</p>
   <button id="startBtn">Start</button>
   <div id="status"></div>
   <canvas id="visualizer" width="300" height="100"></canvas>
@@ -66,10 +66,9 @@
         let row = markovChain[i];
         let total = 0;
         for (let j = 0; j < currentScale.length; j++) {
-          row[j] = Math.random(); // Random transitions
+          row[j] = Math.random();
           total += row[j];
         }
-        // Normalize probabilities
         for (let j = 0; j < currentScale.length; j++) {
           row[j] /= total;
         }
@@ -85,16 +84,17 @@
         sum += probs[i];
         if (rand <= sum) return i;
       }
-      return 0; // Fallback
+      return 0;
     }
 
     // Sound generation
+    let currentWaveform = 'sine';
     function playNote(frequency, time) {
       if (!audioCtx) return;
       try {
         const oscillator = audioCtx.createOscillator();
         const gainNode = audioCtx.createGain();
-        oscillator.type = 'sine';
+        oscillator.type = currentWaveform; // Updated to use dynamic waveform
         oscillator.frequency.setValueAtTime(frequency, audioCtx.currentTime);
         gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime);
         gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
@@ -111,14 +111,13 @@
     // Visualizer setup
     const canvas = document.getElementById('visualizer');
     const ctx = canvas.getContext('2d');
-    function drawVisualizer(noteIdx, motionFactor, scaleName) {
+    function drawVisualizer(noteIdx, motionFactor, scaleName, waveform) {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.fillStyle = `hsl(${noteIdx * 360 / currentScale.length}, 70%, 50%)`;
       ctx.fillRect(0, 0, canvas.width * motionFactor, canvas.height);
-      // Display scale name
       ctx.fillStyle = 'black';
       ctx.font = '12px Arial';
-      ctx.fillText(scaleName, 10, 20);
+      ctx.fillText(`${scaleName} | ${waveform}`, 10, 20);
     }
 
     // Device motion handling (for speed)
@@ -129,20 +128,20 @@
         return;
       }
       const { x, y, z } = event.accelerationIncludingGravity;
-      motionFactor = Math.sqrt(x * x + y * y + z * z) / 15; // Reduced for faster response
-      motionFactor = Math.min(Math.max(motionFactor, 0), 1); // Clamp
-      motionFactor = motionFactor * motionFactor; // Quadratic for sensitivity
+      motionFactor = Math.sqrt(x * x + y * y + z * z) / 15;
+      motionFactor = Math.min(Math.max(motionFactor, 0), 1);
+      motionFactor = motionFactor * motionFactor;
     }
 
-    // Device orientation handling (for scale)
+    // Device orientation handling (for scale and waveform)
     let currentScaleName = 'Major';
     function handleOrientation(event) {
-      if (!event.beta) {
+      if (!event.beta || !event.alpha) {
         document.getElementById('status').textContent = 'Orientation data unavailable.';
         return;
       }
-      const beta = event.beta; // -90 to 90 degrees
-      // Map beta to scale: -90 to 90 -> 4 scales
+      // Scale selection (beta)
+      const beta = event.beta;
       if (beta < -45) {
         currentScale = scales.minorPent;
         currentScaleName = 'Minor Pent';
@@ -156,18 +155,28 @@
         currentScale = scales.majorPent;
         currentScaleName = 'Major Pent';
       }
-      // Update Markov chain for new scale
       markovChain = Array(currentScale.length).fill().map(() => 
         Array(currentScale.length).fill(1 / currentScale.length)
       );
+      // Waveform selection (alpha)
+      const alpha = event.alpha;
+      if (alpha < 90) {
+        currentWaveform = 'sine';
+      } else if (alpha < 180) {
+        currentWaveform = 'square';
+      } else if (alpha < 270) {
+        currentWaveform = 'triangle';
+      } else {
+        currentWaveform = 'sawtooth';
+      }
     }
 
     // Calculate delay from motionFactor (20 BPM to 200 BPM)
     function getNoteDelay(motionFactor) {
       const minBPM = 20;
       const maxBPM = 200;
-      const minDelay = 60000 / maxBPM; // 300ms for 200 BPM
-      const maxDelay = 60000 / minBPM; // 3000ms for 20 BPM
+      const minDelay = 60000 / maxBPM;
+      const maxDelay = 60000 / minBPM;
       return maxDelay - (maxDelay - minDelay) * motionFactor;
     }
 
@@ -176,9 +185,9 @@
     function sequencerLoop() {
       if (!isPlaying) return;
       updateMarkovChain();
-      currentNoteIdx = chooseNextNote(currentNoteIdx % currentScale.length); // Handle scale length changes
+      currentNoteIdx = chooseNextNote(currentNoteIdx % currentScale.length);
       playNote(currentScale[currentNoteIdx], audioCtx.currentTime);
-      drawVisualizer(currentNoteIdx, motionFactor, currentScaleName);
+      drawVisualizer(currentNoteIdx, motionFactor, currentScaleName, currentWaveform);
       const delay = getNoteDelay(motionFactor);
       setTimeout(sequencerLoop, delay);
     }
