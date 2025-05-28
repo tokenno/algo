@@ -24,21 +24,34 @@
       font-size: 16px;
       cursor: pointer;
     }
-    #status {
-      color: red;
+    #status, #oscMessages {
+      color: #333;
       font-size: 14px;
       max-width: 300px;
       text-align: center;
+      white-space: pre-wrap;
+    }
+    #status {
+      color: red;
+    }
+    input {
+      margin: 5px;
+      padding: 5px;
+      font-size: 14px;
     }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/osc-js@2.4.0/dist/osc.min.js"></script>
 </head>
 <body>
   <h1>Stochastic Sequencer</h1>
-  <p>Tilt front-to-back for scales, rotate for waveform, tilt gently for speed (20-200 BPM), tap/hold screen or use toggle for note duration. Sends OSC to DAW wirelessly. Click "Start" to begin.</p>
+  <p>Tilt front-to-back for scales, rotate for waveform, tilt gently for speed (20-200 BPM), tap/hold screen or use toggle for note duration. Enter IP/port and connect OSC to send to Pd wirelessly.</p>
+  <label>OSC IP: <input id="oscIp" type="text" placeholder="192.168.1.100" value="192.168.1.100"></label>
+  <label>Port: <input id="oscPort" type="number" placeholder="8000" value="8000"></label>
+  <button id="connectOscBtn">Connect OSC</button>
   <button id="startBtn">Start</button>
   <button id="toggleDurationBtn">Toggle Duration (2.5s)</button>
   <div id="status"></div>
+  <div id="oscMessages">OSC Messages:<br></div>
   <canvas id="visualizer" width="300" height="100"></canvas>
   <script>
     // Web Audio API setup
@@ -53,20 +66,43 @@
 
     // OSC setup
     let osc = null;
-    try {
-      osc = new OSC({ plugin: new OSC.WebsocketClientPlugin({ host: '192.168.1.145', port: 8000 }) });
-      osc.open();
-      osc.on('open', () => {
-        console.log('OSC connected to 192.168.1.145:8000');
-      });
-      osc.on('error', (err) => {
-        document.getElementById('status').textContent += ' OSC connection failed.';
-        console.error('OSC error:', err);
-      });
-    } catch (e) {
-      document.getElementById('status').textContent += ' OSC initialization failed.';
-      console.error('OSC init failed:', e);
+    let oscConnected = false;
+    const oscMessagesDiv = document.getElementById('oscMessages');
+    function logOscMessage(message) {
+      const lines = oscMessagesDiv.innerText.split('\n');
+      if (lines.length > 10) lines.shift();
+      lines.push(message);
+      oscMessagesDiv.innerText = lines.join('\n');
     }
+
+    function connectOsc() {
+      const ip = document.getElementById('oscIp').value;
+      const port = parseInt(document.getElementById('oscPort').value);
+      if (!ip || !port) {
+        document.getElementById('status').textContent = 'Enter valid IP and port.';
+        return;
+      }
+      try {
+        if (osc) osc.close();
+        osc = new OSC({ plugin: new OSC.WebsocketClientPlugin({ host: ip, port: port }) });
+        osc.open();
+        osc.on('open', () => {
+          oscConnected = true;
+          document.getElementById('status').textContent = `OSC connected to ${ip}:${port}`;
+          console.log(`OSC connected to ${ip}:${port}`);
+        });
+        osc.on('error', (err) => {
+          oscConnected = false;
+          document.getElementById('status').textContent = 'OSC connection failed.';
+          console.error('OSC error:', err);
+        });
+      } catch (e) {
+        document.getElementById('status').textContent = 'OSC initialization failed.';
+        console.error('OSC init failed:', e);
+      }
+    }
+
+    document.getElementById('connectOscBtn').addEventListener('click', connectOsc);
 
     // Scale definitions
     const scales = {
@@ -129,15 +165,18 @@
         console.log(`Playing note: ${frequency}Hz, duration: ${noteDuration}s`);
 
         // Send OSC note
-        if (osc) {
+        if (osc && oscConnected) {
           const noteIdx = currentScale.indexOf(frequency);
           if (noteIdx !== -1) {
             const midiNote = 60 + noteIdx;
             const velocity = 100;
             osc.send(new OSC.Message('/note', midiNote, velocity, noteDuration));
+            logOscMessage(`Sent /note ${midiNote} ${velocity} ${noteDuration}`);
             console.log(`OSC /note: ${midiNote}, ${velocity}, ${noteDuration}s`);
             setTimeout(() => {
               osc.send(new OSC.Message('/note', midiNote, 0, noteDuration));
+              logOscMessage(`Sent /note ${midiNote} 0 ${noteDuration}`);
+              console.log(`OSC /note: ${midiNote}, 0, ${noteDuration}s`);
             }, noteDuration * 1000);
           }
         }
@@ -149,11 +188,13 @@
 
     // Send OSC CC
     function sendControlChanges(motionFactor, duration) {
-      if (osc) {
+      if (osc && oscConnected) {
         const ccTempo = motionFactor * 127;
         const ccDuration = (duration - 0.5) / 2 * 127;
         osc.send(new OSC.Message('/cc/20', ccTempo));
         osc.send(new OSC.Message('/cc/21', ccDuration));
+        logOscMessage(`Sent /cc/20 ${ccTempo.toFixed(0)}`);
+        logOscMessage(`Sent /cc/21 ${ccDuration.toFixed(0)}`);
         console.log(`OSC /cc/20: ${ccTempo.toFixed(0)}, /cc/21: ${ccDuration.toFixed(0)}`);
       }
     }
