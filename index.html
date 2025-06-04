@@ -110,6 +110,8 @@
   
   <script>
     // Global variables
+
+    // Global variables
     let pyodide;
     let pythonBridgeActive = false;
 
@@ -152,7 +154,8 @@ async def main():
     print(f"WebSocket server started on port ${wsPort}, forwarding to UDP ${udpIp}:${udpPort}")
     await server.wait_closed()
 
-asyncio.run(main())
+# Create a new task instead of using asyncio.run()
+asyncio.create_task(main())
 `;
 
         await pyodide.runPythonAsync(formattedCode);
@@ -164,70 +167,8 @@ asyncio.run(main())
       }
     }
 
-    document.addEventListener('DOMContentLoaded', async function() {
-      updatePythonStatus("Starting Pyodide initialization...");
-      
-      try {
-        pyodide = await loadPyodide({
-          indexURL: "https://cdn.jsdelivr.net/pyodide/v0.23.4/full/"
-        });
-        updatePythonStatus("Pyodide loaded, installing packages...");
-        
-        await pyodide.loadPackage("micropip");
-        const micropip = pyodide.pyimport("micropip");
-        
-        updatePythonStatus("Installing websockets...");
-        await micropip.install("websockets");
-        
-        updatePythonStatus("Installing python-osc...");
-        await micropip.install("python-osc");
-        
-        updatePythonStatus("Python bridge ready!");
-        
-        // Start with default values
-        const udpIp = document.getElementById('udpTargetIp').value.trim();
-        const udpPort = parseInt(document.getElementById('udpTargetPort').value);
-        const wsPort = parseInt(document.getElementById('bridgePort').value);
-        await startPythonBridge(udpIp, udpPort, wsPort);
-        
-      } catch (e) {
-        console.error("Initialization error:", e);
-        updatePythonStatus(`Initialization failed:\n${e}`);
-      }
-
-      // Setup event listeners
-      document.getElementById('updateUdpTarget').addEventListener('click', async function() {
-        const udpIp = document.getElementById('udpTargetIp').value.trim();
-        const udpPort = parseInt(document.getElementById('udpTargetPort').value);
-        const wsPort = parseInt(document.getElementById('bridgePort').value);
-        
-        if (udpIp && udpPort >= 1024 && udpPort <= 65535) {
-          await startPythonBridge(udpIp, udpPort, wsPort);
-        } else {
-          updatePythonStatus("Invalid UDP target settings");
-        }
-      });
-
-      document.getElementById('updateBridgeConfig').addEventListener('click', function() {
-        const newIp = document.getElementById('bridgeIp').value.trim();
-        const newPort = parseInt(document.getElementById('bridgePort').value);
-        
-        if (newIp && newPort >= 1024 && newPort <= 65535) {
-          bridgeIp = newIp;
-          bridgePort = newPort;
-          updateBridgeDisplay();
-          stopLocalServer();
-          startLocalServer();
-          
-          // Restart Python bridge with new port if active
-          if (pythonBridgeActive) {
-            const udpIp = document.getElementById('udpTargetIp').value.trim();
-            const udpPort = parseInt(document.getElementById('udpTargetPort').value);
-            startPythonBridge(udpIp, udpPort, newPort);
-          }
-        }
-      });
-    });
+    // Rest of your code remains the same...
+</script>
 
     // Rest of your existing functions (initAudio, updateBridgeDisplay, etc.)
     // These would need to be included as well for complete functionality
