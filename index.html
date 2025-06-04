@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Stochastic Sequencer with OSC Bridge</title>
+  <title>Stochastic Sequencer with MIDI/OSC Bridge</title>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -45,7 +45,7 @@
     button.disconnect {
       background-color: #f44336;
     }
-    #serverStatus, #oscStatus {
+    #serverStatus, #oscStatus, #midiStatus {
       color: #333;
       font-size: 14px;
       margin-top: 10px;
@@ -63,12 +63,44 @@
       background-color: #eee;
       border-radius: 3px;
     }
+    .error-message {
+      color: red;
+    }
+    .wireless-options {
+      margin-top: 10px;
+    }
+    .wireless-options button {
+      margin-right: 10px;
+      margin-bottom: 10px;
+    }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/osc/dist/osc-browser.min.js"></script>
 </head>
 <body>
-  <h1>Stochastic Sequencer with OSC Bridge</h1>
+  <h1>Stochastic Sequencer with MIDI/OSC Bridge</h1>
   
+  <div class="config-section">
+    <h2>MIDI Configuration</h2>
+    <div>
+      <button id="requestMIDI">Enable MIDI</button>
+      <label for="midiInput">MIDI Input:</label>
+      <select id="midiInput" disabled>
+        <option value="">No MIDI inputs available</option>
+      </select>
+      
+      <label for="midiOutput">MIDI Output:</label>
+      <select id="midiOutput" disabled>
+        <option value="">No MIDI outputs available</option>
+      </select>
+      
+      <div class="wireless-options">
+        <button id="bluetoothMidi" disabled>Connect Bluetooth MIDI</button>
+        <button id="networkMidi" disabled>Connect Network MIDI</button>
+      </div>
+    </div>
+    <div id="midiStatus">MIDI: Not enabled</div>
+  </div>
+
   <div class="config-section">
     <h2>Bridge Configuration</h2>
     <div>
@@ -80,7 +112,7 @@
       
       <button id="updateBridgeConfig">Update Bridge</button>
     </div>
-    <div id="serverStatus">Local WebSocket server: Stopped | UDP server: Stopped</div>
+    <div id="serverStatus">Local WebSocket server: Stopped | UDP server: Not available in browser</div>
   </div>
   
   <div class="config-section">
@@ -89,7 +121,7 @@
       <label for="oscType">Connection Type:</label>
       <select id="oscType">
         <option value="ws">WebSocket</option>
-        <option value="udp">UDP</option>
+        <option value="udp" disabled>UDP (disabled in browser)</option>
       </select>
       
       <label for="oscIp">Target IP:</label>
@@ -131,22 +163,15 @@
     <button id="sendPlay">Send /play 440 0.5</button>
     <button id="sendStop">Send /stop</button>
     <p>For WebSocket connections, connect to <strong><span id="displayBridgeProtocol">ws://</span><span id="displayBridgeIp">127.0.0.1</span>:<span id="displayBridgePort">9000</span></strong></p>
-    <p>For UDP connections, send to <strong><span id="displayUdpIp">127.0.0.1</span>:<span id="displayUdpPort">9000</span></strong></p>
   </div>
   
   <div>
-    <h2>OSC Messages</h2>
+    <h2>Messages</h2>
     <div id="oscMessages"></div>
   </div>
   
   <script>
     document.addEventListener('DOMContentLoaded', function() {
-      if (typeof osc === 'undefined') {
-        console.error("OSC library failed to load!");
-        alert("Error: OSC library didn't load. Check console for details.");
-        return;
-      }
-
       // Audio context and synth variables
       let audioContext;
       let gainNode;
@@ -207,7 +232,16 @@
       }
       
       document.getElementById('testSynth').addEventListener('click', () => {
-        playNote(440, 0.5);
+        if (midiOutput) {
+          // Send MIDI note on (channel 1)
+          midiOutput.send([0x90, 69, 64]); // Note 69 (A4) with velocity 64
+          setTimeout(() => {
+            // Send MIDI note off after 500ms
+            midiOutput.send([0x80, 69, 0]);
+          }, 500);
+        } else {
+          playNote(440, 0.5); // Fallback to Web Audio
+        }
       });
       
       document.getElementById('attackTime').addEventListener('input', function() {
@@ -218,24 +252,187 @@
         document.getElementById('releaseValue').textContent = this.value;
       });
       
-      // Bridge configuration
-      let bridgeIp = "127.0.0.1";
-      let bridgePort = 9000;
-      
-      function logOscMessage(message) {
+      // Message logging
+      function logOscMessage(message, isError = false) {
         const msgElement = document.createElement('div');
-        msgElement.className = 'osc-message';
+        msgElement.className = isError ? 'osc-message error-message' : 'osc-message';
         msgElement.textContent = message;
         document.getElementById('oscMessages').appendChild(msgElement);
         document.getElementById('oscMessages').scrollTop = document.getElementById('oscMessages').scrollHeight;
       }
       
       // ==============================================
-      // Embedded WebSocket-to-OSC Bridge
+      // MIDI Implementation
       // ==============================================
-      let wsserver = null;
-      let wsClients = new Set();
-      let udpServer = null;
+      let midiAccess = null;
+      let midiInput = null;
+      let midiOutput = null;
+      
+      function enableMIDI() {
+        if (navigator.requestMIDIAccess) {
+          navigator.requestMIDIAccess({ sysex: false })
+            .then(onMIDISuccess, onMIDIFailure);
+        } else {
+          alert("WebMIDI is not supported in your browser");
+        }
+      }
+      
+      function onMIDISuccess(access) {
+        midiAccess = access;
+        updateMIDIStatus("MIDI ready");
+        
+        // Setup input/output dropdowns
+        refreshMIDIDevices();
+        
+        // Listen for device changes
+        midiAccess.onstatechange = refreshMIDIDevices;
+        
+        document.getElementById('requestMIDI').disabled = true;
+        document.getElementById('bluetoothMidi').disabled = false;
+        document.getElementById('networkMidi').disabled = false;
+      }
+      
+      function onMIDIFailure(error) {
+        updateMIDIStatus(`MIDI error: ${error.message}`, true);
+        console.error("MIDI access failed:", error);
+      }
+      
+      function refreshMIDIDevices() {
+        const inputs = midiAccess.inputs.values();
+        const outputs = midiAccess.outputs.values();
+        
+        // Update input dropdown
+        const inputSelect = document.getElementById('midiInput');
+        inputSelect.innerHTML = '';
+        inputSelect.disabled = false;
+        
+        let hasInputs = false;
+        for (const input of inputs) {
+          const option = document.createElement('option');
+          option.value = input.id;
+          option.textContent = input.name;
+          inputSelect.appendChild(option);
+          hasInputs = true;
+        }
+        
+        if (!hasInputs) {
+          inputSelect.appendChild(new Option('No MIDI inputs available', ''));
+          inputSelect.disabled = true;
+        }
+        
+        // Update output dropdown
+        const outputSelect = document.getElementById('midiOutput');
+        outputSelect.innerHTML = '';
+        outputSelect.disabled = false;
+        
+        let hasOutputs = false;
+        for (const output of outputs) {
+          const option = document.createElement('option');
+          option.value = output.id;
+          option.textContent = output.name;
+          outputSelect.appendChild(option);
+          hasOutputs = true;
+        }
+        
+        if (!hasOutputs) {
+          outputSelect.appendChild(new Option('No MIDI outputs available', ''));
+          outputSelect.disabled = true;
+        }
+      }
+      
+      function updateMIDIStatus(message, isError = false) {
+        const statusElement = document.getElementById('midiStatus');
+        statusElement.textContent = `MIDI: ${message}`;
+        statusElement.style.color = isError ? 'red' : '#333';
+      }
+      
+      // Event listener for MIDI input selection
+      document.getElementById('midiInput').addEventListener('change', function() {
+        if (midiInput) {
+          midiInput.onmidimessage = null;
+        }
+        
+        const inputId = this.value;
+        if (!inputId) return;
+        
+        midiInput = midiAccess.inputs.get(inputId);
+        midiInput.onmidimessage = handleMIDIMessage;
+        updateMIDIStatus(`Connected to input: ${midiInput.name}`);
+      });
+      
+      // Event listener for MIDI output selection
+      document.getElementById('midiOutput').addEventListener('change', function() {
+        const outputId = this.value;
+        if (!outputId) {
+          midiOutput = null;
+          return;
+        }
+        
+        midiOutput = midiAccess.outputs.get(outputId);
+        updateMIDIStatus(`Connected to output: ${midiOutput.name}`);
+      });
+      
+      function handleMIDIMessage(event) {
+        const [command, note, velocity] = event.data;
+        const message = `MIDI: ${command.toString(16)} ${note} ${velocity}`;
+        logOscMessage(message);
+        
+        // Note-on message (command 144-159, channel 1-16)
+        if (command >= 144 && command <= 159 && velocity > 0) {
+          const frequency = midiNoteToFrequency(note);
+          const normalizedVelocity = velocity / 127;
+          playNote(frequency, normalizedVelocity);
+        }
+        // Note-off message (command 128-143 or velocity=0)
+        else if ((command >= 128 && command <= 143) || 
+                (command >= 144 && command <= 159 && velocity === 0)) {
+          stopAllNotes();
+        }
+      }
+      
+      function midiNoteToFrequency(note) {
+        return 440 * Math.pow(2, (note - 69) / 12);
+      }
+      
+      // Wireless MIDI functions
+      document.getElementById('bluetoothMidi').addEventListener('click', async function() {
+        try {
+          if (!navigator.bluetooth) {
+            throw new Error('Web Bluetooth not supported');
+          }
+          
+          const device = await navigator.bluetooth.requestDevice({
+            filters: [{ services: ['03b80e5a-ede8-4b33-a751-6ce34ec4c700'] }] // MIDI over Bluetooth LE
+          });
+          
+          updateMIDIStatus(`Connecting to ${device.name}...`);
+          logOscMessage(`Attempting Bluetooth MIDI connection to ${device.name}`);
+          
+          // The actual connection is handled by WebMIDI automatically
+          // We just need to wait for the device to appear in MIDI outputs
+          
+        } catch (error) {
+          updateMIDIStatus(`Bluetooth error: ${error.message}`, true);
+          logOscMessage(`Bluetooth error: ${error.message}`, true);
+        }
+      });
+      
+      document.getElementById('networkMidi').addEventListener('click', function() {
+        updateMIDIStatus("Looking for network MIDI devices...");
+        logOscMessage("Note: On macOS, enable 'Network MIDI' in Audio MIDI Setup");
+        
+        // Network MIDI devices should appear automatically in WebMIDI
+        // if they're properly set up on the host system
+      });
+      
+      // Initialize MIDI
+      document.getElementById('requestMIDI').addEventListener('click', enableMIDI);
+      
+      // ==============================================
+      // OSC Implementation (WebSocket only)
+      // ==============================================
+      let bridgeIp = "127.0.0.1";
+      let bridgePort = 9000;
       let oscPort = null;
       let oscConnected = false;
       
@@ -244,95 +441,29 @@
         document.getElementById('displayBridgeProtocol').textContent = protocol;
         document.getElementById('displayBridgeIp').textContent = bridgeIp;
         document.getElementById('displayBridgePort').textContent = bridgePort;
-        document.getElementById('displayUdpIp').textContent = bridgeIp;
-        document.getElementById('displayUdpPort').textContent = bridgePort;
       }
       
       function startLocalServer() {
         try {
-          // Start WebSocket server
-          wsserver = {
-            port: bridgePort,
-            close: () => {
-              document.getElementById('serverStatus').textContent = `Local WebSocket server: Stopped | UDP server: ${udpServer ? 'Running' : 'Stopped'}`;
-              wsClients.clear();
-            }
-          };
-          
-          // Start UDP server
-          udpServer = new osc.UDPPort({
-            localAddress: "0.0.0.0",
-            localPort: bridgePort,
-            metadata: true
-          });
-          
-          udpServer.on("ready", () => {
-            document.getElementById('serverStatus').textContent = 
-              `Local WebSocket server: Running on ${window.location.protocol === 'https:' ? 'wss://' : 'ws://'}${bridgeIp}:${bridgePort} | ` +
-              `UDP server: Running on ${bridgeIp}:${bridgePort}`;
-            console.log(`UDP server running on ${bridgeIp}:${bridgePort}`);
-          });
-          
-          udpServer.on("error", (err) => {
-            console.error('UDP server error:', err);
-            document.getElementById('serverStatus').textContent = 
-              `Local WebSocket server: Running | UDP server: Error - ${err.message}`;
-          });
-          
-          udpServer.on("message", (oscMsg) => {
-            const message = `Received UDP OSC: ${oscMsg.address} ${oscMsg.args.map(arg => arg.value).join(' ')}`;
-            logOscMessage(message);
-            
-            if (oscMsg.address === '/play') {
-              const freq = oscMsg.args[0]?.value || 440;
-              const vel = oscMsg.args[1]?.value || 0.7;
-              playNote(freq, vel);
-            } else if (oscMsg.address === '/stop') {
-              stopAllNotes();
-            }
-          });
-          
-          udpServer.open();
-          
-          // WebSocket server status
           document.getElementById('serverStatus').textContent = 
-            `Local WebSocket server: Running on ${window.location.protocol === 'https:' ? 'wss://' : 'ws://'}${bridgeIp}:${bridgePort} | ` +
-            `UDP server: Starting...`;
-          console.log(`WebSocket server running on ${bridgeIp}:${bridgePort}`);
+            `Local WebSocket server: Not available in browser | UDP server: Not available in browser`;
           
           window.sendToLocalOscClient = function(address, ...args) {
-            if (wsClients.size > 0) {
-              console.log(`Forwarding OSC: ${address} ${args.join(' ')}`);
-              document.getElementById('serverStatus').textContent = 
-                `Local WebSocket server: Forwarded ${address} ${args.join(' ')} | ` +
-                `UDP server: Running`;
-              
-              if (address === '/play') {
-                const freq = args[0] || 440;
-                const vel = args[1] || 0.7;
-                playNote(freq, vel);
-              } else if (address === '/stop') {
-                stopAllNotes();
-              }
-              
-              logOscMessage(`Received: ${address} ${args.join(' ')}`);
+            if (address === '/play') {
+              const freq = args[0] || 440;
+              const vel = args[1] || 0.7;
+              playNote(freq, vel);
+            } else if (address === '/stop') {
+              stopAllNotes();
             }
+            logOscMessage(`Received: ${address} ${args.join(' ')}`);
           };
-          
         } catch (e) {
+          const errorMsg = e.message || 'Failed to start local server';
           console.error('Failed to start local server:', e);
-          document.getElementById('serverStatus').textContent = 'Local server failed to start - ' + e.message;
-        }
-      }
-      
-      function stopLocalServer() {
-        if (wsserver) {
-          wsserver.close();
-          wsserver = null;
-        }
-        if (udpServer) {
-          udpServer.close();
-          udpServer = null;
+          logOscMessage(`Server startup error: ${errorMsg}`, true);
+          document.getElementById('serverStatus').textContent = `Local server failed to start - ${errorMsg}`;
+          if (e.stack) console.error(e.stack);
         }
       }
       
@@ -344,17 +475,12 @@
           bridgeIp = newIp;
           bridgePort = newPort;
           updateBridgeDisplay();
-          stopLocalServer();
-          startLocalServer();
           console.log(`Bridge configuration updated to ${bridgeIp}:${bridgePort}`);
         } else {
           alert('Please enter valid IP and port (1024-65535)');
         }
       });
       
-      // ==============================================
-      // OSC Connection Handler
-      // ==============================================
       function connectOsc() {
         const type = document.getElementById('oscType').value;
         const ip = document.getElementById('oscIp').value.trim();
@@ -367,9 +493,16 @@
           oscPort = null;
           
           if (type === 'ws') {
-            // Determine protocol based on current page protocol
             const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
             const url = `${protocol}${ip}:${port}`;
+            
+            if (!url.match(/^wss?:\/\/.+/)) {
+              const errorMsg = `Invalid WebSocket URL: ${url}`;
+              console.error(errorMsg);
+              updateOscStatus(`Error: ${errorMsg}`, true);
+              logOscMessage(`Connection error: ${errorMsg}`, true);
+              return;
+            }
             
             oscPort = new osc.WebSocketPort({
               url: url,
@@ -389,51 +522,11 @@
             });
             
             oscPort.on("error", (err) => {
+              const errorMsg = err.message || 'Unknown WebSocket error';
               console.error('WebSocket error:', err);
-              updateOscStatus(`Error: ${err.message}`);
-              logOscMessage(`WebSocket error: ${err.message}`);
-            });
-            
-            oscPort.on("message", function(oscMsg) {
-              const message = `Received OSC: ${oscMsg.address} ${oscMsg.args.map(arg => arg.value).join(' ')}`;
-              logOscMessage(message);
-              
-              if (oscMsg.address === '/play') {
-                const freq = oscMsg.args[0]?.value || 440;
-                const vel = oscMsg.args[1]?.value || 0.7;
-                playNote(freq, vel);
-              } else if (oscMsg.address === '/stop') {
-                stopAllNotes();
-              }
-            });
-            
-            oscPort.open();
-            
-          } else if (type === 'udp') {
-            oscPort = new osc.UDPPort({
-              localAddress: "0.0.0.0",
-              localPort: 0,
-              remoteAddress: ip,
-              remotePort: port,
-              metadata: true
-            });
-            
-            oscPort.on("ready", () => {
-              oscConnected = true;
-              updateOscStatus(`Connected to ${ip}:${port} via UDP`);
-              logOscMessage('UDP connection ready');
-            });
-            
-            oscPort.on("close", () => {
-              oscConnected = false;
-              updateOscStatus('Disconnected');
-              logOscMessage('UDP connection closed');
-            });
-            
-            oscPort.on("error", (err) => {
-              console.error('UDP error:', err);
-              updateOscStatus(`Error: ${err.message}`);
-              logOscMessage(`UDP error: ${err.message}`);
+              updateOscStatus(`Error: ${errorMsg}`, true);
+              logOscMessage(`WebSocket error: ${errorMsg}`, true);
+              if (err.stack) console.error(err.stack);
             });
             
             oscPort.on("message", function(oscMsg) {
@@ -451,11 +544,12 @@
             
             oscPort.open();
           }
-          
         } catch (e) {
+          const errorMsg = e.message || 'Connection failed';
           console.error('Connection error:', e);
-          updateOscStatus(`Connection failed: ${e.message}`);
-          logOscMessage(`Connection error: ${e.message}`);
+          updateOscStatus(`Error: ${errorMsg}`, true);
+          logOscMessage(`Connection error: ${errorMsg}`, true);
+          if (e.stack) console.error(e.stack);
         }
       }
       
@@ -469,14 +563,18 @@
           updateOscStatus('Disconnected');
           logOscMessage('Disconnected from OSC');
         } catch (e) {
+          const errorMsg = e.message || 'Disconnection failed';
           console.error('Disconnection error:', e);
-          updateOscStatus(`Disconnection failed: ${e.message}`);
-          logOscMessage(`Disconnection error: ${e.message}`);
+          updateOscStatus(`Error: ${errorMsg}`, true);
+          logOscMessage(`Disconnection error: ${errorMsg}`, true);
+          if (e.stack) console.error(e.stack);
         }
       }
       
-      function updateOscStatus(message) {
-        document.getElementById('oscStatus').textContent = `OSC: ${message}`;
+      function updateOscStatus(message, isError = false) {
+        const statusElement = document.getElementById('oscStatus');
+        statusElement.textContent = `OSC: ${message}`;
+        statusElement.style.color = isError ? 'red' : '#333';
         document.getElementById('connectOsc').disabled = oscConnected;
         document.getElementById('disconnectOsc').disabled = !oscConnected;
       }
@@ -496,9 +594,11 @@
             });
             logOscMessage('Sent /play 440 0.5');
           } catch (e) {
+            const errorMsg = e.message || 'Error sending message';
             console.error('Error sending message:', e);
-            alert(`Error sending message: ${e.message}`);
-            logOscMessage(`Error sending message: ${e.message}`);
+            alert(`Error: ${errorMsg}`);
+            logOscMessage(`Error sending message: ${errorMsg}`, true);
+            if (e.stack) console.error(e.stack);
           }
         } else {
           alert("Not connected to OSC. Please connect first.");
@@ -514,16 +614,18 @@
             });
             logOscMessage('Sent /stop');
           } catch (e) {
+            const errorMsg = e.message || 'Error sending message';
             console.error('Error sending message:', e);
-            alert(`Error sending message: ${e.message}`);
-            logOscMessage(`Error sending message: ${e.message}`);
+            alert(`Error: ${errorMsg}`);
+            logOscMessage(`Error sending message: ${errorMsg}`, true);
+            if (e.stack) console.error(e.stack);
           }
         } else {
           alert("Not connected to OSC. Please connect first.");
         }
       });
       
-      // Initialize
+      // Initialize everything
       initAudio();
       updateBridgeDisplay();
       startLocalServer();
