@@ -112,11 +112,20 @@
   <!-- ... -->
 
   <script>
-    document.addEventListener('DOMContentLoaded', async function() {
-      // Initialize Pyodide
-      let pyodide;
-      let pythonBridgeActive = false;
-      const pythonStatus = document.getElementById('pythonStatus');
+ document.addEventListener('DOMContentLoaded', async function() {
+  const pyodideReady = await initPyodide();
+
+  if (pyodideReady) {
+    const udpIp = document.getElementById('udpTargetIp').value.trim();
+    const udpPort = parseInt(document.getElementById('udpTargetPort').value);
+    const wsPort = parseInt(document.getElementById('bridgePort').value);
+
+    startPythonBridge(udpIp, udpPort, wsPort);
+  } else {
+    updatePythonStatus("Failed to initialize Pyodide.");
+  }
+});
+
       
    async function initPyodide() {
   try {
