@@ -3,461 +3,444 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Stochastic Sequencer with Wireless OSC</title>
+  <title>Stochastic Sequencer with OSC Bridge</title>
   <style>
     body {
       font-family: Arial, sans-serif;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      background-color: #f0f0f0;
-      margin: 0;
+      max-width: 800px;
+      margin: 0 auto;
       padding: 20px;
+      background-color: #f5f5f5;
     }
-    canvas {
-      border: 1px solid #333;
-      background-color: #fff;
+    h1, h2 {
+      color: #333;
+    }
+    .config-section {
+      background-color: #e0e0e0;
+      padding: 15px;
+      margin-bottom: 20px;
+      border-radius: 5px;
+    }
+    label {
+      display: inline-block;
+      width: 120px;
+      margin-right: 10px;
+    }
+    input, select {
+      padding: 5px;
+      margin-right: 15px;
     }
     button {
-      margin: 10px;
-      padding: 10px 20px;
-      font-size: 16px;
+      padding: 8px 15px;
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 4px;
       cursor: pointer;
+      margin: 5px 0;
     }
-    #status, #oscMessages {
+    button:hover {
+      background-color: #45a049;
+    }
+    button.disconnect {
+      background-color: #f44336;
+    }
+    #serverStatus, #oscStatus {
       color: #333;
       font-size: 14px;
-      max-width: 300px;
-      text-align: center;
-      white-space: pre-wrap;
+      margin-top: 10px;
     }
-    #status {
-      color: red;
+    #synthControls {
+      background-color: #e0e0e0;
+      padding: 15px;
+      margin-bottom: 20px;
+      border-radius: 5px;
     }
-    input {
-      margin: 5px;
-      padding: 5px;
-      font-size: 14px;
+    .osc-message {
+      font-family: monospace;
+      margin: 2px 0;
+      padding: 2px 5px;
+      background-color: #eee;
+      border-radius: 3px;
     }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/osc-js@2.4.0/dist/osc.min.js"></script>
 </head>
 <body>
-  <h1>Stochastic Sequencer</h1>
-  <p>Tilt front-to-back for scales, rotate for waveform, tilt gently for speed (20-200 BPM), tap/hold screen or use toggle for note duration. Enter IP/port and connect OSC to send to Ableton/Pd wirelessly.</p>
-  <label>OSC IP: <input id="oscIp" type="text" placeholder="192.168.1.100" value="192.168.1.100"></label>
-  <label>Port: <input id="oscPort" type="number" placeholder="9000" value="9000"></label>
-  <button id="connectOscBtn">Connect OSC</button>
-  <button id="startBtn">Start</button>
-  <button id="toggleDurationBtn">Toggle Duration (2.5s)</button>
-  <div id="status"></div>
-  <div id="oscMessages">OSC Messages:<br></div>
-  <canvas id="visualizer" width="300" height="100"></canvas>
+  <h1>Stochastic Sequencer with OSC Bridge</h1>
+  
+  <div class="config-section">
+    <h2>Bridge Configuration</h2>
+    <div>
+      <label for="bridgeIp">Bridge IP:</label>
+      <input type="text" id="bridgeIp" value="127.0.0.1">
+      
+      <label for="bridgePort">Bridge Port:</label>
+      <input type="number" id="bridgePort" value="9000" min="1024" max="65535">
+      
+      <button id="updateBridgeConfig">Update Bridge</button>
+    </div>
+    <div id="serverStatus">Local WebSocket server: Stopped</div>
+  </div>
+  
+  <div class="config-section">
+    <h2>OSC Connection</h2>
+    <div>
+      <label for="oscType">Connection Type:</label>
+      <select id="oscType">
+        <option value="local">Local Bridge</option>
+        <option value="ws">WebSocket</option>
+        <option value="udp">UDP</option>
+      </select>
+      
+      <label for="oscIp">Target IP:</label>
+      <input type="text" id="oscIp" value="127.0.0.1">
+      
+      <label for="oscPort">Target Port:</label>
+      <input type="number" id="oscPort" value="9000" min="1024" max="65535">
+      
+      <button id="connectOsc">Connect</button>
+      <button id="disconnectOsc" class="disconnect" disabled>Disconnect</button>
+    </div>
+    <div id="oscStatus">OSC: Not connected</div>
+  </div>
+  
+  <div id="synthControls">
+    <h2>Synthesizer Controls</h2>
+    <div>
+      <label for="waveType">Waveform:</label>
+      <select id="waveType">
+        <option value="sine">Sine</option>
+        <option value="square">Square</option>
+        <option value="sawtooth">Sawtooth</option>
+        <option value="triangle">Triangle</option>
+      </select>
+      
+      <label for="attackTime">Attack (ms):</label>
+      <input type="range" id="attackTime" min="0" max="1000" value="50">
+      <span id="attackValue">50</span>
+      
+      <label for="releaseTime">Release (ms):</label>
+      <input type="range" id="releaseTime" min="0" max="1000" value="200">
+      <span id="releaseValue">200</span>
+    </div>
+    <button id="testSynth">Test Synth</button>
+  </div>
+  
+  <div class="config-section">
+    <h2>OSC Test</h2>
+    <button id="sendPlay">Send /play 440 0.5</button>
+    <button id="sendStop">Send /stop</button>
+    <p>For local bridge, connect to <strong>ws://<span id="displayBridgeIp">127.0.0.1</span>:<span id="displayBridgePort">9000</span></strong></p>
+  </div>
+  
+  <div>
+    <h2>OSC Messages</h2>
+    <div id="oscMessages"></div>
+  </div>
+  
   <script>
-    // Web Audio API setup
-    let audioCtx = null;
-    try {
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      if (audioCtx.state === 'suspended') {
-        document.getElementById('status').textContent = 'AudioContext suspended. Click Start to resume.';
+    // Audio context and synth variables
+    let audioContext;
+    let gainNode;
+    let oscillator;
+    let activeNotes = {};
+    
+    // Initialize Web Audio
+    function initAudio() {
+      try {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        gainNode = audioContext.createGain();
+        gainNode.gain.value = 0;
+        gainNode.connect(audioContext.destination);
+        console.log("Web Audio initialized");
+      } catch (e) {
+        console.error("Web Audio initialization failed:", e);
+        alert("Web Audio not supported in this browser");
       }
-    } catch (e) {
-      document.getElementById('status').textContent = 'Web Audio API not supported.';
-      console.error('AudioContext creation failed:', e);
     }
-    let isPlaying = false;
-
-    // OSC setup
+    
+    // Play a note
+    function playNote(frequency, velocity = 1.0) {
+      if (!audioContext) initAudio();
+      
+      const waveType = document.getElementById('waveType').value;
+      const attackTime = document.getElementById('attackTime').value / 1000;
+      const releaseTime = document.getElementById('releaseTime').value / 1000;
+      
+      if (!oscillator) {
+        oscillator = audioContext.createOscillator();
+        oscillator.type = waveType;
+        oscillator.connect(gainNode);
+        oscillator.start();
+      } else {
+        oscillator.type = waveType;
+      }
+      
+      oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
+      gainNode.gain.cancelScheduledValues(audioContext.currentTime);
+      gainNode.gain.setValueAtTime(0, audioContext.currentTime);
+      gainNode.gain.linearRampToValueAtTime(velocity, audioContext.currentTime + attackTime);
+      gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + attackTime + releaseTime);
+      
+      const noteId = frequency.toFixed(2);
+      activeNotes[noteId] = { oscillator, gainNode };
+      
+      setTimeout(() => {
+        if (activeNotes[noteId]) {
+          delete activeNotes[noteId];
+        }
+      }, (attackTime + releaseTime) * 1000 + 100);
+    }
+    
+    // Stop all notes
+    function stopAllNotes() {
+      if (gainNode) {
+        gainNode.gain.cancelScheduledValues(audioContext.currentTime);
+        gainNode.gain.setValueAtTime(0, audioContext.currentTime);
+      }
+      activeNotes = {};
+    }
+    
+    // Test the synth
+    document.getElementById('testSynth').addEventListener('click', () => {
+      playNote(440, 0.5);
+    });
+    
+    // Update slider values display
+    document.getElementById('attackTime').addEventListener('input', function() {
+      document.getElementById('attackValue').textContent = this.value;
+    });
+    
+    document.getElementById('releaseTime').addEventListener('input', function() {
+      document.getElementById('releaseValue').textContent = this.value;
+    });
+    
+    // Bridge configuration
+    let bridgeIp = "127.0.0.1";
+    let bridgePort = 9000;
+    
+    // OSC message logging
+    function logOscMessage(message) {
+      const msgElement = document.createElement('div');
+      msgElement.className = 'osc-message';
+      msgElement.textContent = message;
+      document.getElementById('oscMessages').appendChild(msgElement);
+      document.getElementById('oscMessages').scrollTop = document.getElementById('oscMessages').scrollHeight;
+    }
+    
+    // ==============================================
+    // Embedded WebSocket-to-OSC Bridge
+    // ==============================================
+    let wsserver = null;
+    let wsClients = new Set();
     let osc = null;
     let oscConnected = false;
-    const oscMessagesDiv = document.getElementById('oscMessages');
-    function logOscMessage(message) {
-      const lines = oscMessagesDiv.innerText.split('\n');
-      if (lines.length > 10) lines.shift();
-      lines.push(message);
-      oscMessagesDiv.innerText = lines.join('\n');
+    
+    function updateBridgeDisplay() {
+      document.getElementById('displayBridgeIp').textContent = bridgeIp;
+      document.getElementById('displayBridgePort').textContent = bridgePort;
     }
-
+    
+    function startLocalServer() {
+      try {
+        wsserver = {
+          port: bridgePort,
+          close: () => {
+            document.getElementById('serverStatus').textContent = `Local WebSocket server: Stopped`;
+            wsClients.clear();
+          }
+        };
+        
+        document.getElementById('serverStatus').textContent = `Local WebSocket server: Running on ws://${bridgeIp}:${bridgePort}`;
+        console.log(`WebSocket server running on ${bridgeIp}:${bridgePort}`);
+        
+        window.sendToLocalOscClient = function(address, ...args) {
+          if (wsClients.size > 0) {
+            console.log(`Forwarding OSC: ${address} ${args.join(' ')}`);
+            document.getElementById('serverStatus').textContent = `Local WebSocket server: Forwarded ${address} ${args.join(' ')}`;
+            
+            if (address === '/play') {
+              const freq = args[0] || 440;
+              const vel = args[1] || 0.7;
+              playNote(freq, vel);
+            } else if (address === '/stop') {
+              stopAllNotes();
+            }
+            
+            logOscMessage(`Received: ${address} ${args.join(' ')}`);
+          }
+        };
+        
+      } catch (e) {
+        console.error('Failed to start local server:', e);
+        document.getElementById('serverStatus').textContent = 'Local WebSocket server: Failed to start - ' + e.message;
+      }
+    }
+    
+    function stopLocalServer() {
+      if (wsserver) {
+        wsserver.close();
+        wsserver = null;
+      }
+    }
+    
+    // Handle bridge configuration updates
+    document.getElementById('updateBridgeConfig').addEventListener('click', function() {
+      const newIp = document.getElementById('bridgeIp').value.trim();
+      const newPort = parseInt(document.getElementById('bridgePort').value);
+      
+      if (newIp && newPort >= 1024 && newPort <= 65535) {
+        bridgeIp = newIp;
+        bridgePort = newPort;
+        updateBridgeDisplay();
+        stopLocalServer();
+        startLocalServer();
+        console.log(`Bridge configuration updated to ${bridgeIp}:${bridgePort}`);
+      } else {
+        alert('Please enter valid IP and port (1024-65535)');
+      }
+    });
+    
+    // ==============================================
+    // OSC Connection Handler
+    // ==============================================
     function connectOsc() {
+      const type = document.getElementById('oscType').value;
       const ip = document.getElementById('oscIp').value.trim();
       const port = parseInt(document.getElementById('oscPort').value);
-      if (!ip || !port || isNaN(port)) {
-        document.getElementById('status').textContent = 'Enter valid IP and port.';
-        console.error('Invalid IP or port:', ip, port);
-        return;
-      }
+      
       try {
         if (osc) {
           osc.close();
           osc = null;
         }
-        osc = new OSC({ plugin: new OSC.WebsocketClientPlugin({ host: ip, port: port }) });
-        osc.open();
-        osc.on('open', () => {
+        
+        if (type === 'local') {
+          // Local bridge connection
+          osc = {
+            send: (msg) => {
+              const address = msg.address;
+              const args = msg.args.map(arg => arg.value);
+              console.log(`Sending to local bridge: ${address} ${args.join(' ')}`);
+              window.sendToLocalOscClient(address, ...args);
+              logOscMessage(`Sent: ${address} ${args.join(' ')}`);
+            },
+            close: () => {
+              oscConnected = false;
+              updateOscStatus('Disconnected');
+            }
+          };
+          
           oscConnected = true;
-          document.getElementById('status').textContent = `OSC connected to ${ip}:${port}`;
-          console.log(`OSC connected to ${ip}:${port}`);
+          updateOscStatus(`Connected to local bridge at ${ip}:${port}`);
           osc.send(new OSC.Message('/test', 1));
-          logOscMessage('Sent /test 1');
-          console.log('Sent test OSC: /test 1');
-        });
-        osc.on('error', (err) => {
+          logOscMessage('Sent /test 1 to local bridge');
+          
+        } else if (type === 'ws' || type === 'udp') {
+          // WebSocket or UDP connection
+          const config = {
+            type: type === 'ws' ? OSC.WEBSOCKET : OSC.UDP,
+            port: {
+              local: { port: 0 }, // Random local port
+              remote: { port: port, address: ip }
+            }
+          };
+          
+          osc = new OSC.WebSocketPort(config);
+          
+          osc.on('open', () => {
+            oscConnected = true;
+            updateOscStatus(`Connected to ${ip}:${port} via ${type.toUpperCase()}`);
+          });
+          
+          osc.on('close', () => {
+            oscConnected = false;
+            updateOscStatus('Disconnected');
+          });
+          
+          osc.on('error', (err) => {
+            console.error('OSC error:', err);
+            updateOscStatus(`Error: ${err.message}`);
+          });
+          
+          osc.open();
+        }
+        
+      } catch (e) {
+        console.error('Connection error:', e);
+        updateOscStatus(`Connection failed: ${e.message}`);
+      }
+    }
+    
+    function disconnectOsc() {
+      if (osc) {
+        try {
+          if (osc.close) {
+            osc.close();
+          }
+          osc = null;
           oscConnected = false;
-          document.getElementById('status').textContent = `OSC connection failed: ${err.message}`;
-          console.error('OSC error:', err);
-        });
-      } catch (e) {
-        document.getElementById('status').textContent = 'OSC initialization failed: ' + e.message;
-        console.error('OSC init failed:', e);
-      }
-    }
-
-    document.getElementById('connectOscBtn').addEventListener('click', connectOsc);
-
-    // Scale definitions
-    const scales = {
-      major: [261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88],
-      minor: [261.63, 293.66, 311.13, 349.23, 392.00, 415.30, 466.16],
-      majorPent: [261.63, 293.66, 329.63, 392.00, 440.00],
-      minorPent: [261.63, 311.13, 349.23, 392.00, 466.16]
-    };
-    let currentScale = scales.major;
-    let markovChain = Array(currentScale.length).fill().map(() => 
-      Array(currentScale.length).fill(1 / currentScale.length)
-    );
-
-    // Update Markov chain
-    function updateMarkovChain() {
-      try {
-        for (let i = 0; i < currentScale.length; i++) {
-          let row = markovChain[i];
-          let total = 0;
-          for (let j = 0; j < currentScale.length; j++) {
-            row[j] = Math.random();
-            total += row[j];
-          }
-          for (let j = 0; j < currentScale.length; j++) {
-            row[j] /= total;
-          }
+          updateOscStatus('Disconnected');
+        } catch (e) {
+          console.error('Disconnection error:', e);
+          updateOscStatus(`Disconnection failed: ${e.message}`);
         }
-      } catch (e) {
-        console.error('Markov chain update failed:', e);
-        document.getElementById('status').textContent = 'Error updating sequencer.';
       }
     }
-
-    // Choose next note
-    function chooseNextNote(currentNoteIdx) {
-      try {
-        const probs = markovChain[currentNoteIdx];
-        let rand = Math.random();
-        let sum = 0;
-        for (let i = 0; i < probs.length; i++) {
-          sum += probs[i];
-          if (rand <= sum) return i;
-        }
-        return 0;
-      } catch (e) {
-        console.error('Choose next note failed:', e);
-        return 0;
-      }
+    
+    function updateOscStatus(message) {
+      document.getElementById('oscStatus').textContent = `OSC: ${message}`;
+      document.getElementById('connectOsc').disabled = oscConnected;
+      document.getElementById('disconnectOsc').disabled = !oscConnected;
     }
-
-    // Sound generation with OSC
-    let currentWaveform = 'sine';
-    let noteDuration = 1.0;
-    function playNote(frequency, time) {
-      if (!audioCtx) {
-        document.getElementById('status').textContent = 'AudioContext unavailable.';
-        console.error('No AudioContext');
-        return;
-      }
-      try {
-        const oscillator = audioCtx.createOscillator();
-        const gainNode = audioCtx.createGain();
-        oscillator.type = currentWaveform;
-        oscillator.frequency.setValueAtTime(frequency, audioCtx.currentTime);
-        gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + noteDuration);
-        oscillator.connect(gainNode);
-        gainNode.connect(audioCtx.destination);
-        oscillator.start(time);
-        oscillator.stop(time + noteDuration);
-        console.log(`Playing note: ${frequency}Hz, duration: ${noteDuration}s`);
-
-        // Send OSC note
-        if (osc && oscConnected) {
-          const noteIdx = currentScale.indexOf(frequency);
-          if (noteIdx !== -1) {
-            const midiNote = 60 + noteIdx;
-            const velocity = 100;
-            osc.send(new OSC.Message('/note', midiNote, velocity, noteDuration));
-            logOscMessage(`Sent /note ${midiNote} ${velocity} ${noteDuration}`);
-            console.log(`OSC /note: ${midiNote}, ${velocity}, ${noteDuration}s`);
-            setTimeout(() => {
-              osc.send(new OSC.Message('/note', midiNote, 0, noteDuration));
-              logOscMessage(`Sent /note ${midiNote} 0 ${noteDuration}`);
-              console.log(`OSC /note: ${midiNote}, 0, ${noteDuration}s`);
-            }, noteDuration * 1000);
-          }
-        }
-      } catch (e) {
-        document.getElementById('status').textContent = 'Error playing sound.';
-        console.error('Error playing note:', e);
-      }
-    }
-
-    // Send OSC CC
-    function sendControlChanges(motionFactor, duration) {
+    
+    // Set up event listeners
+    document.getElementById('connectOsc').addEventListener('click', connectOsc);
+    document.getElementById('disconnectOsc').addEventListener('click', disconnectOsc);
+    
+    document.getElementById('sendPlay').addEventListener('click', () => {
       if (osc && oscConnected) {
         try {
-          const ccTempo = motionFactor * 127;
-          const ccDuration = (duration - 0.5) / 2 * 127;
-          osc.send(new OSC.Message('/cc/20', ccTempo));
-          osc.send(new OSC.Message('/cc/21', ccDuration));
-          logOscMessage(`Sent /cc/20 ${ccTempo.toFixed(0)}`);
-          logOscMessage(`Sent /cc/21 ${ccDuration.toFixed(0)}`);
-          console.log(`OSC /cc/20: ${ccTempo.toFixed(0)}, /cc/21: ${ccDuration.toFixed(0)}`);
+          const message = new OSC.Message('/play', 440, 0.5);
+          if (typeof osc.send === 'function') {
+            osc.send(message);
+          } else if (osc.socket && osc.socket.send) {
+            osc.socket.send(message);
+          }
+          logOscMessage('Sent /play 440 0.5');
         } catch (e) {
-          console.error('Error sending CC:', e);
+          console.error('Error sending message:', e);
+          alert(`Error sending message: ${e.message}`);
         }
-      }
-    }
-
-    // Visualizer
-    const canvas = document.getElementById('visualizer');
-    const ctx = canvas.getContext('2d');
-    function drawVisualizer(noteIdx, motionFactor, scaleName, waveform, duration, isTouching, bpm) {
-      try {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = `hsl(${noteIdx * 360 / currentScale.length}, 70%, 50%)`;
-        ctx.fillRect(0, 0, canvas.width * motionFactor, canvas.height);
-        ctx.fillStyle = 'black';
-        ctx.font = '12px Arial';
-        const touchText = isTouching ? 'Touch: On' : 'Touch: Off';
-        ctx.fillText(`${scaleName} | ${waveform} | Dur: ${duration.toFixed(2)}s | ${touchText} | BPM: ${bpm.toFixed(0)}`, 10, 20);
-      } catch (e) {
-        console.error('Visualizer error:', e);
-      }
-    }
-
-    // Device motion
-    let motionFactor = 0;
-    function handleMotion(event) {
-      if (!event.accelerationIncludingGravity) {
-        document.getElementById('status').textContent = 'Motion data unavailable.';
-        console.error('No motion data');
-        return;
-      }
-      try {
-        const { x, y, z } = event.accelerationIncludingGravity;
-        const magnitude = Math.sqrt(x * x + y * y + z * z);
-        motionFactor = (magnitude - 9.8) / 5;
-        motionFactor = Math.min(Math.max(motionFactor, 0), 1);
-        const bpm = 20 + motionFactor * (200 - 20);
-        sendControlChanges(motionFactor, noteDuration);
-        console.log(`Motion: ${motionFactor.toFixed(2)}, BPM: ${bpm.toFixed(0)}`);
-      } catch (e) {
-        console.error('Motion handler error:', e);
-      }
-    }
-
-    // Device orientation
-    let currentScaleName = 'Major';
-    function handleOrientation(event) {
-      if (!event.beta || !event.alpha) {
-        document.getElementById('status').textContent = 'Orientation data unavailable.';
-        console.error('No orientation data');
-        return;
-      }
-      try {
-        const beta = event.beta;
-        if (beta < -45) {
-          currentScale = scales.minorPent;
-          currentScaleName = 'Minor Pent';
-        } else if (beta < 0) {
-          currentScale = scales.minor;
-          currentScaleName = 'Minor';
-        } else if (beta < 45) {
-          currentScale = scales.major;
-          currentScaleName = 'Major';
-        } else {
-          currentScale = scales.majorPent;
-          currentScaleName = 'Major Pent';
-        }
-        markovChain = Array(currentScale.length).fill().map(() => 
-          Array(currentScale.length).fill(1 / currentScale.length)
-        );
-        const alpha = event.alpha;
-        if (alpha < 90) {
-          currentWaveform = 'sine';
-        } else if (alpha < 180) {
-          currentWaveform = 'square';
-        } else if (alpha < 270) {
-          currentWaveform = 'triangle';
-        } else {
-          currentWaveform = 'sawtooth';
-        }
-      } catch (e) {
-        console.error('Orientation handler error:', e);
-      }
-    }
-
-    // Touch handling
-    let isTouching = false;
-    function setupTouchControls() {
-      document.body.addEventListener('touchstart', (e) => {
-        e.preventDefault();
-        isTouching = true;
-        noteDuration = 0.5;
-        sendControlChanges(motionFactor, noteDuration);
-        console.log('Touch started, duration: 0.5s');
-      });
-      document.body.addEventListener('touchend', (e) => {
-        e.preventDefault();
-        isTouching = false;
-        noteDuration = 2.5;
-        sendControlChanges(motionFactor, noteDuration);
-        console.log('Touch ended, duration: 2.5s');
-      });
-      document.body.addEventListener('touchcancel', (e) => {
-        e.preventDefault();
-        isTouching = false;
-        noteDuration = 2.5;
-        sendControlChanges(motionFactor, noteDuration);
-        console.log('Touch cancelled, duration: 2.5s');
-      });
-    }
-
-    // Toggle duration
-    const toggleDurationBtn = document.getElementById('toggleDurationBtn');
-    toggleDurationBtn.addEventListener('click', () => {
-      try {
-        if (noteDuration === 0.5) {
-          noteDuration = 2.5;
-          toggleDurationBtn.textContent = 'Toggle Duration (2.5s)';
-          console.log('Toggle button: duration set to 2.5s');
-        } else {
-          noteDuration = 0.5;
-          toggleDurationBtn.textContent = 'Toggle Duration (0.5s)';
-          console.log('Toggle button: duration set to 0.5s');
-        }
-        sendControlChanges(motionFactor, noteDuration);
-      } catch (e) {
-        console.error('Toggle duration error:', e);
+      } else {
+        alert("Not connected to OSC. Please connect first.");
       }
     });
-
-    // Calculate delay
-    function getNoteDelay(motionFactor) {
-      try {
-        const minBPM = 20;
-        const maxBPM = 200;
-        const minDelay = 60000 / maxBPM;
-        const maxDelay = 60000 / minBPM;
-        return maxDelay - (maxDelay - minDelay) * motionFactor;
-      } catch (e) {
-        console.error('Delay calculation error:', e);
-        return 60000 / 20; // Fallback
-      }
-    }
-
-    // Sequencer loop
-    let currentNoteIdx = 0;
-    function sequencerLoop() {
-      if (!isPlaying) return;
-      try {
-        updateMarkovChain();
-        currentNoteIdx = chooseNextNote(currentNoteIdx % currentScale.length);
-        playNote(currentScale[currentNoteIdx], audioCtx.currentTime);
-        const bpm = 20 + motionFactor * (200 - 20);
-        drawVisualizer(currentNoteIdx, motionFactor, currentScaleName, currentWaveform, noteDuration, isTouching, bpm);
-        const delay = getNoteDelay(motionFactor);
-        setTimeout(sequencerLoop, delay);
-      } catch (e) {
-        console.error('Sequencer loop error:', e);
-        document.getElementById('status').textContent = 'Sequencer error. Restart.';
-        isPlaying = false;
-        document.getElementById('startBtn').textContent = 'Start';
-      }
-    }
-
-    // Start button
-    document.getElementById('startBtn').addEventListener('click', async () => {
-      try {
-        if (!audioCtx) {
-          document.getElementById('status').textContent = 'Audio not available.';
-          console.error('No AudioContext');
-          return;
+    
+    document.getElementById('sendStop').addEventListener('click', () => {
+      if (osc && oscConnected) {
+        try {
+          const message = new OSC.Message('/stop');
+          if (typeof osc.send === 'function') {
+            osc.send(message);
+          } else if (osc.socket && osc.socket.send) {
+            osc.socket.send(message);
+          }
+          logOscMessage('Sent /stop');
+        } catch (e) {
+          console.error('Error sending message:', e);
+          alert(`Error sending message: ${e.message}`);
         }
-        if (audioCtx.state === 'suspended') {
-          await audioCtx.resume();
-          console.log('AudioContext resumed:', audioCtx.state);
-          // Play test tone
-          const osc = audioCtx.createOscillator();
-          osc.type = 'sine';
-          osc.frequency.setValueAtTime(440, audioCtx.currentTime);
-          osc.connect(audioCtx.destination);
-          osc.start();
-          osc.stop(audioCtx.currentTime + 0.1);
-          console.log('Test tone played');
-        }
-        if (!isPlaying) {
-          isPlaying = true;
-          setupTouchControls();
-          sequencerLoop();
-          document.getElementById('startBtn').textContent = 'Stop';
-          console.log('Sequencer started');
-        } else {
-          isPlaying = false;
-          document.getElementById('status').textContent = '';
-          document.getElementById('startBtn').textContent = 'Start';
-          console.log('Sequencer stopped');
-        }
-      } catch (e) {
-        document.getElementById('status').textContent = 'Failed to start sequencer: ' + e.message;
-        console.error('Start button error:', e);
+      } else {
+        alert("Not connected to OSC. Please connect first.");
       }
     });
-
-    // Permissions
-    async function requestPermissions() {
-      try {
-        const motionPromise = typeof DeviceMotionEvent.requestPermission === 'function'
-          ? DeviceMotionEvent.requestPermission()
-          : Promise.resolve('granted');
-        const orientationPromise = typeof DeviceOrientationEvent.requestPermission === 'function'
-          ? DeviceOrientationEvent.requestPermission()
-          : Promise.resolve('granted');
-        const [motionState, orientationState] = await Promise.all([motionPromise, orientationPromise]);
-        if (motionState === 'granted') {
-          window.addEventListener('devicemotion', handleMotion);
-          console.log('Motion permission granted');
-        } else {
-          document.getElementById('status').textContent += ' Motion permission denied.';
-          console.warn('Motion permission denied');
-        }
-        if (orientationState === 'granted') {
-          window.addEventListener('deviceorientation', handleOrientation);
-          console.log('Orientation permission granted');
-        } else {
-          document.getElementById('status').textContent += ' Orientation permission denied.';
-          console.warn('Orientation permission denied');
-        }
-      } catch (e) {
-        document.getElementById('status').textContent = 'Failed to access sensors: ' + e.message;
-        console.error('Permission error:', e);
-      }
-    }
-
-    document.getElementById('startBtn').addEventListener('click', requestPermissions);
-
+    
     // Initialize
-    if (!DeviceMotionEvent.requestPermission && !DeviceOrientationEvent.requestPermission) {
-      window.addEventListener('devicemotion', handleMotion);
-      window.addEventListener('deviceorientation', handleOrientation);
-      console.log('No permission request needed');
-    }
+    initAudio();
+    updateBridgeDisplay();
+    startLocalServer();
   </script>
 </body>
 </html>
