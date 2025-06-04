@@ -63,37 +63,12 @@
       background-color: #eee;
       border-radius: 3px;
     }
-    #pythonStatus {
-      font-family: monospace;
-      white-space: pre;
-      background-color: #333;
-      color: #0f0;
-      padding: 10px;
-      border-radius: 5px;
-      max-height: 200px;
-      overflow-y: auto;
-    }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/osc/dist/osc-browser.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/pyodide/v0.23.4/full/pyodide.js"></script>
 </head>
 <body>
   <h1>Stochastic Sequencer with OSC Bridge</h1>
   
-  <div class="config-section">
-    <h2>Embedded Python Bridge</h2>
-    <div id="pythonStatus">Initializing Python bridge...</div>
-    <div>
-      <label for="udpTargetIp">UDP Target IP:</label>
-      <input type="text" id="udpTargetIp" value="127.0.0.1">
-      
-      <label for="udpTargetPort">UDP Target Port:</label>
-      <input type="number" id="udpTargetPort" value="8000" min="1024" max="65535">
-      
-      <button id="updateUdpTarget">Update UDP Target</button>
-    </div>
-  </div>
-
   <div class="config-section">
     <h2>Bridge Configuration</h2>
     <div>
@@ -105,88 +80,454 @@
       
       <button id="updateBridgeConfig">Update Bridge</button>
     </div>
-    <div id="serverStatus">Local WebSocket server: Stopped</div>
+    <div id="serverStatus">Local WebSocket server: Stopped | UDP server: Stopped</div>
+  </div>
+  
+  <div class="config-section">
+    <h2>OSC Connection</h2>
+    <div>
+      <label for="oscType">Connection Type:</label>
+      <select id="oscType">
+        <option value="ws">WebSocket</option>
+        <option value="udp">UDP</option>
+      </select>
+      
+      <label for="oscIp">Target IP:</label>
+      <input type="text" id="oscIp" value="127.0.0.1">
+      
+      <label for="oscPort">Target Port:</label>
+      <input type="number" id="oscPort" value="9000" min="1024" max="65535">
+      
+      <button id="connectOsc">Connect</button>
+      <button id="disconnectOsc" class="disconnect" disabled>Disconnect</button>
+    </div>
+    <div id="oscStatus">OSC: Not connected</div>
+  </div>
+  
+  <div id="synthControls">
+    <h2>Synthesizer Controls</h2>
+    <div>
+      <label for="waveType">Waveform:</label>
+      <select id="waveType">
+        <option value="sine">Sine</option>
+        <option value="square">Square</option>
+        <option value="sawtooth">Sawtooth</option>
+        <option value="triangle">Triangle</option>
+      </select>
+      
+      <label for="attackTime">Attack (ms):</label>
+      <input type="range" id="attackTime" min="0" max="1000" value="50">
+      <span id="attackValue">50</span>
+      
+      <label for="releaseTime">Release (ms):</label>
+      <input type="range" id="releaseTime" min="0" max="1000" value="200">
+      <span id="releaseValue">200</span>
+    </div>
+    <button id="testSynth">Test Synth</button>
+  </div>
+  
+  <div class="config-section">
+    <h2>OSC Test</h2>
+    <button id="sendPlay">Send /play 440 0.5</button>
+    <button id="sendStop">Send /stop</button>
+    <p>For WebSocket connections, connect to <strong><span id="displayBridgeProtocol">ws://</span><span id="displayBridgeIp">127.0.0.1</span>:<span id="displayBridgePort">9000</span></strong></p>
+    <p>For UDP connections, send to <strong><span id="displayUdpIp">127.0.0.1</span>:<span id="displayUdpPort">9000</span></strong></p>
+  </div>
+  
+  <div>
+    <h2>OSC Messages</h2>
+    <div id="oscMessages"></div>
   </div>
   
   <script>
-    // Global variables
-
-    // Global variables
-    let pyodide;
-    let pythonBridgeActive = false;
-
-    function updatePythonStatus(message) {
-      const statusElement = document.getElementById('pythonStatus');
-      statusElement.textContent = message;
-      statusElement.scrollTop = statusElement.scrollHeight;
-    }
-
-    async function startPythonBridge(udpIp, udpPort, wsPort) {
-      try {
-        const formattedCode = `
-import asyncio
-import websockets
-from pythonosc import udp_client, osc_message_builder
-
-udp_target = udp_client.SimpleUDPClient("${udpIp}", ${udpPort})
-
-async def handle_websocket(websocket, path):
-    print(f"WebSocket connected: {path}")
-    try:
-        async for message in websocket:
-            try:
-                parts = message.split()
-                if len(parts) >= 2:
-                    address = parts[0]
-                    args = [float(x) if x.replace('.', '', 1).isdigit() else x for x in parts[1:]]
-                    msg = osc_message_builder.OscMessageBuilder(address=address)
-                    for arg in args:
-                        msg.add_arg(arg)
-                    udp_target.send(msg.build())
-                    print(f"Forwarded: {address} {args}")
-            except Exception as e:
-                print(f"Message processing error: {e}")
-    except Exception as e:
-        print(f"WebSocket handling error: {e}")
-
-async def main():
-    server = await websockets.serve(handle_websocket, "0.0.0.0", ${wsPort})
-    print(f"WebSocket server started on port ${wsPort}, forwarding to UDP ${udpIp}:${udpPort}")
-    await server.wait_closed()
-
-# Create a new task instead of using asyncio.run()
-asyncio.create_task(main())
-`;
-
-        await pyodide.runPythonAsync(formattedCode);
-        pythonBridgeActive = true;
-        updatePythonStatus(`Python bridge running\nForwarding to ${udpIp}:${udpPort}`);
-      } catch (e) {
-        console.error("Python bridge error:", e);
-        updatePythonStatus(`Python bridge error:\n${e}`);
+    document.addEventListener('DOMContentLoaded', function() {
+      if (typeof osc === 'undefined') {
+        console.error("OSC library failed to load!");
+        alert("Error: OSC library didn't load. Check console for details.");
+        return;
       }
-    }
 
-    // Rest of your code remains the same...
-</script>
-
-    // Rest of your existing functions (initAudio, updateBridgeDisplay, etc.)
-    // These would need to be included as well for complete functionality
-    function initAudio() {
-      // Your audio initialization code
-    }
-
-    function updateBridgeDisplay() {
-      // Your bridge display update code
-    }
-
-    function startLocalServer() {
-      // Your local server start code
-    }
-
-    function stopLocalServer() {
-      // Your local server stop code
-    }
+      // Audio context and synth variables
+      let audioContext;
+      let gainNode;
+      let oscillator;
+      let activeNotes = {};
+      
+      function initAudio() {
+        try {
+          audioContext = new (window.AudioContext || window.webkitAudioContext)();
+          gainNode = audioContext.createGain();
+          gainNode.gain.value = 0;
+          gainNode.connect(audioContext.destination);
+          console.log("Web Audio initialized");
+        } catch (e) {
+          console.error("Web Audio initialization failed:", e);
+          alert("Web Audio not supported in this browser");
+        }
+      }
+      
+      function playNote(frequency, velocity = 1.0) {
+        if (!audioContext) initAudio();
+        
+        const waveType = document.getElementById('waveType').value;
+        const attackTime = document.getElementById('attackTime').value / 1000;
+        const releaseTime = document.getElementById('releaseTime').value / 1000;
+        
+        if (!oscillator) {
+          oscillator = audioContext.createOscillator();
+          oscillator.type = waveType;
+          oscillator.connect(gainNode);
+          oscillator.start();
+        } else {
+          oscillator.type = waveType;
+        }
+        
+        oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
+        gainNode.gain.cancelScheduledValues(audioContext.currentTime);
+        gainNode.gain.setValueAtTime(0, audioContext.currentTime);
+        gainNode.gain.linearRampToValueAtTime(velocity, audioContext.currentTime + attackTime);
+        gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + attackTime + releaseTime);
+        
+        const noteId = frequency.toFixed(2);
+        activeNotes[noteId] = { oscillator, gainNode };
+        
+        setTimeout(() => {
+          if (activeNotes[noteId]) {
+            delete activeNotes[noteId];
+          }
+        }, (attackTime + releaseTime) * 1000 + 100);
+      }
+      
+      function stopAllNotes() {
+        if (gainNode) {
+          gainNode.gain.cancelScheduledValues(audioContext.currentTime);
+          gainNode.gain.setValueAtTime(0, audioContext.currentTime);
+        }
+        activeNotes = {};
+      }
+      
+      document.getElementById('testSynth').addEventListener('click', () => {
+        playNote(440, 0.5);
+      });
+      
+      document.getElementById('attackTime').addEventListener('input', function() {
+        document.getElementById('attackValue').textContent = this.value;
+      });
+      
+      document.getElementById('releaseTime').addEventListener('input', function() {
+        document.getElementById('releaseValue').textContent = this.value;
+      });
+      
+      // Bridge configuration
+      let bridgeIp = "127.0.0.1";
+      let bridgePort = 9000;
+      
+      function logOscMessage(message) {
+        const msgElement = document.createElement('div');
+        msgElement.className = 'osc-message';
+        msgElement.textContent = message;
+        document.getElementById('oscMessages').appendChild(msgElement);
+        document.getElementById('oscMessages').scrollTop = document.getElementById('oscMessages').scrollHeight;
+      }
+      
+      // ==============================================
+      // Embedded WebSocket-to-OSC Bridge
+      // ==============================================
+      let wsserver = null;
+      let wsClients = new Set();
+      let udpServer = null;
+      let oscPort = null;
+      let oscConnected = false;
+      
+      function updateBridgeDisplay() {
+        const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+        document.getElementById('displayBridgeProtocol').textContent = protocol;
+        document.getElementById('displayBridgeIp').textContent = bridgeIp;
+        document.getElementById('displayBridgePort').textContent = bridgePort;
+        document.getElementById('displayUdpIp').textContent = bridgeIp;
+        document.getElementById('displayUdpPort').textContent = bridgePort;
+      }
+      
+      function startLocalServer() {
+        try {
+          // Start WebSocket server
+          wsserver = {
+            port: bridgePort,
+            close: () => {
+              document.getElementById('serverStatus').textContent = `Local WebSocket server: Stopped | UDP server: ${udpServer ? 'Running' : 'Stopped'}`;
+              wsClients.clear();
+            }
+          };
+          
+          // Start UDP server
+          udpServer = new osc.UDPPort({
+            localAddress: "0.0.0.0",
+            localPort: bridgePort,
+            metadata: true
+          });
+          
+          udpServer.on("ready", () => {
+            document.getElementById('serverStatus').textContent = 
+              `Local WebSocket server: Running on ${window.location.protocol === 'https:' ? 'wss://' : 'ws://'}${bridgeIp}:${bridgePort} | ` +
+              `UDP server: Running on ${bridgeIp}:${bridgePort}`;
+            console.log(`UDP server running on ${bridgeIp}:${bridgePort}`);
+          });
+          
+          udpServer.on("error", (err) => {
+            console.error('UDP server error:', err);
+            document.getElementById('serverStatus').textContent = 
+              `Local WebSocket server: Running | UDP server: Error - ${err.message}`;
+          });
+          
+          udpServer.on("message", (oscMsg) => {
+            const message = `Received UDP OSC: ${oscMsg.address} ${oscMsg.args.map(arg => arg.value).join(' ')}`;
+            logOscMessage(message);
+            
+            if (oscMsg.address === '/play') {
+              const freq = oscMsg.args[0]?.value || 440;
+              const vel = oscMsg.args[1]?.value || 0.7;
+              playNote(freq, vel);
+            } else if (oscMsg.address === '/stop') {
+              stopAllNotes();
+            }
+          });
+          
+          udpServer.open();
+          
+          // WebSocket server status
+          document.getElementById('serverStatus').textContent = 
+            `Local WebSocket server: Running on ${window.location.protocol === 'https:' ? 'wss://' : 'ws://'}${bridgeIp}:${bridgePort} | ` +
+            `UDP server: Starting...`;
+          console.log(`WebSocket server running on ${bridgeIp}:${bridgePort}`);
+          
+          window.sendToLocalOscClient = function(address, ...args) {
+            if (wsClients.size > 0) {
+              console.log(`Forwarding OSC: ${address} ${args.join(' ')}`);
+              document.getElementById('serverStatus').textContent = 
+                `Local WebSocket server: Forwarded ${address} ${args.join(' ')} | ` +
+                `UDP server: Running`;
+              
+              if (address === '/play') {
+                const freq = args[0] || 440;
+                const vel = args[1] || 0.7;
+                playNote(freq, vel);
+              } else if (address === '/stop') {
+                stopAllNotes();
+              }
+              
+              logOscMessage(`Received: ${address} ${args.join(' ')}`);
+            }
+          };
+          
+        } catch (e) {
+          console.error('Failed to start local server:', e);
+          document.getElementById('serverStatus').textContent = 'Local server failed to start - ' + e.message;
+        }
+      }
+      
+      function stopLocalServer() {
+        if (wsserver) {
+          wsserver.close();
+          wsserver = null;
+        }
+        if (udpServer) {
+          udpServer.close();
+          udpServer = null;
+        }
+      }
+      
+      document.getElementById('updateBridgeConfig').addEventListener('click', function() {
+        const newIp = document.getElementById('bridgeIp').value.trim();
+        const newPort = parseInt(document.getElementById('bridgePort').value);
+        
+        if (newIp && newPort >= 1024 && newPort <= 65535) {
+          bridgeIp = newIp;
+          bridgePort = newPort;
+          updateBridgeDisplay();
+          stopLocalServer();
+          startLocalServer();
+          console.log(`Bridge configuration updated to ${bridgeIp}:${bridgePort}`);
+        } else {
+          alert('Please enter valid IP and port (1024-65535)');
+        }
+      });
+      
+      // ==============================================
+      // OSC Connection Handler
+      // ==============================================
+      function connectOsc() {
+        const type = document.getElementById('oscType').value;
+        const ip = document.getElementById('oscIp').value.trim();
+        const port = parseInt(document.getElementById('oscPort').value);
+        
+        try {
+          if (oscPort && typeof oscPort.close === 'function') {
+            oscPort.close();
+          }
+          oscPort = null;
+          
+          if (type === 'ws') {
+            // Determine protocol based on current page protocol
+            const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+            const url = `${protocol}${ip}:${port}`;
+            
+            oscPort = new osc.WebSocketPort({
+              url: url,
+              metadata: true
+            });
+            
+            oscPort.on("open", () => {
+              oscConnected = true;
+              updateOscStatus(`Connected to ${ip}:${port} via WebSocket`);
+              logOscMessage('WebSocket connection established');
+            });
+            
+            oscPort.on("close", () => {
+              oscConnected = false;
+              updateOscStatus('Disconnected');
+              logOscMessage('WebSocket connection closed');
+            });
+            
+            oscPort.on("error", (err) => {
+              console.error('WebSocket error:', err);
+              updateOscStatus(`Error: ${err.message}`);
+              logOscMessage(`WebSocket error: ${err.message}`);
+            });
+            
+            oscPort.on("message", function(oscMsg) {
+              const message = `Received OSC: ${oscMsg.address} ${oscMsg.args.map(arg => arg.value).join(' ')}`;
+              logOscMessage(message);
+              
+              if (oscMsg.address === '/play') {
+                const freq = oscMsg.args[0]?.value || 440;
+                const vel = oscMsg.args[1]?.value || 0.7;
+                playNote(freq, vel);
+              } else if (oscMsg.address === '/stop') {
+                stopAllNotes();
+              }
+            });
+            
+            oscPort.open();
+            
+          } else if (type === 'udp') {
+            oscPort = new osc.UDPPort({
+              localAddress: "0.0.0.0",
+              localPort: 0,
+              remoteAddress: ip,
+              remotePort: port,
+              metadata: true
+            });
+            
+            oscPort.on("ready", () => {
+              oscConnected = true;
+              updateOscStatus(`Connected to ${ip}:${port} via UDP`);
+              logOscMessage('UDP connection ready');
+            });
+            
+            oscPort.on("close", () => {
+              oscConnected = false;
+              updateOscStatus('Disconnected');
+              logOscMessage('UDP connection closed');
+            });
+            
+            oscPort.on("error", (err) => {
+              console.error('UDP error:', err);
+              updateOscStatus(`Error: ${err.message}`);
+              logOscMessage(`UDP error: ${err.message}`);
+            });
+            
+            oscPort.on("message", function(oscMsg) {
+              const message = `Received OSC: ${oscMsg.address} ${oscMsg.args.map(arg => arg.value).join(' ')}`;
+              logOscMessage(message);
+              
+              if (oscMsg.address === '/play') {
+                const freq = oscMsg.args[0]?.value || 440;
+                const vel = oscMsg.args[1]?.value || 0.7;
+                playNote(freq, vel);
+              } else if (oscMsg.address === '/stop') {
+                stopAllNotes();
+              }
+            });
+            
+            oscPort.open();
+          }
+          
+        } catch (e) {
+          console.error('Connection error:', e);
+          updateOscStatus(`Connection failed: ${e.message}`);
+          logOscMessage(`Connection error: ${e.message}`);
+        }
+      }
+      
+      function disconnectOsc() {
+        try {
+          if (oscPort && typeof oscPort.close === 'function') {
+            oscPort.close();
+          }
+          oscPort = null;
+          oscConnected = false;
+          updateOscStatus('Disconnected');
+          logOscMessage('Disconnected from OSC');
+        } catch (e) {
+          console.error('Disconnection error:', e);
+          updateOscStatus(`Disconnection failed: ${e.message}`);
+          logOscMessage(`Disconnection error: ${e.message}`);
+        }
+      }
+      
+      function updateOscStatus(message) {
+        document.getElementById('oscStatus').textContent = `OSC: ${message}`;
+        document.getElementById('connectOsc').disabled = oscConnected;
+        document.getElementById('disconnectOsc').disabled = !oscConnected;
+      }
+      
+      document.getElementById('connectOsc').addEventListener('click', connectOsc);
+      document.getElementById('disconnectOsc').addEventListener('click', disconnectOsc);
+      
+      document.getElementById('sendPlay').addEventListener('click', () => {
+        if (oscPort && oscConnected) {
+          try {
+            oscPort.send({
+              address: "/play",
+              args: [
+                { type: "f", value: 440 },
+                { type: "f", value: 0.5 }
+              ]
+            });
+            logOscMessage('Sent /play 440 0.5');
+          } catch (e) {
+            console.error('Error sending message:', e);
+            alert(`Error sending message: ${e.message}`);
+            logOscMessage(`Error sending message: ${e.message}`);
+          }
+        } else {
+          alert("Not connected to OSC. Please connect first.");
+        }
+      });
+      
+      document.getElementById('sendStop').addEventListener('click', () => {
+        if (oscPort && oscConnected) {
+          try {
+            oscPort.send({
+              address: "/stop",
+              args: []
+            });
+            logOscMessage('Sent /stop');
+          } catch (e) {
+            console.error('Error sending message:', e);
+            alert(`Error sending message: ${e.message}`);
+            logOscMessage(`Error sending message: ${e.message}`);
+          }
+        } else {
+          alert("Not connected to OSC. Please connect first.");
+        }
+      });
+      
+      // Initialize
+      initAudio();
+      updateBridgeDisplay();
+      startLocalServer();
+    });
   </script>
 </body>
 </html>
