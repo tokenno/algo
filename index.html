@@ -118,37 +118,38 @@
       let pythonBridgeActive = false;
       const pythonStatus = document.getElementById('pythonStatus');
       
-      async function initPyodide() {
-        try {
-          pythonStatus.textContent = "Loading Pyodide... (this may take a minute)";
-          pyodide = await loadPyodide({
-            indexURL: "https://cdn.jsdelivr.net/pyodide/v0.23.4/full/"
-          });
-          
-          await pyodide.loadPackage("micropip");
-          const micropip = pyodide.pyimport("micropip");
-          await micropip.install("websockets");
-          await micropip.install("python-osc");
-          
-          pythonStatus.textContent = "Python bridge ready!\n";
-          return true;
-        } catch (e) {
-          pythonStatus.textContent = `Python bridge failed to load:\n${e}`;
-          console.error("Pyodide initialization failed:", e);
-          return false;
-        }
-      }
-      
-      function updatePythonStatus(message) {
-        pythonStatus.textContent += message + "\n";
-        pythonStatus.scrollTop = pythonStatus.scrollHeight;
-      }
-      
-     function startPythonBridge(udpIp, udpPort, wsPort) {
-  if (!pyodide) {
-    updatePythonStatus("Python bridge not initialized");
-    return;
+   async function initPyodide() {
+  try {
+    console.log("STEP 1: Starting Pyodide load");
+    pythonStatus.textContent = "Loading Pyodide...";
+    
+    pyodide = await loadPyodide({
+      indexURL: "https://cdn.jsdelivr.net/pyodide/v0.23.4/full/"
+    });
+
+    console.log("STEP 2: Pyodide loaded");
+
+    await pyodide.loadPackage("micropip");
+    console.log("STEP 3: micropip loaded");
+
+    const micropip = pyodide.pyimport("micropip");
+    console.log("STEP 4: micropip imported");
+
+    await micropip.install("websockets");
+    console.log("STEP 5: websockets installed");
+
+    await micropip.install("python-osc");
+    console.log("STEP 6: python-osc installed");
+
+    pythonStatus.textContent = "Python bridge ready!\n";
+    return true;
+
+  } catch (e) {
+    console.error("PYODIDE INIT ERROR:", e);
+    pythonStatus.textContent = `Python bridge failed to load:\n${e}`;
+    return false;
   }
+}
 
   const code = `
 import asyncio
