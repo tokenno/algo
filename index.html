@@ -108,59 +108,20 @@
     <div id="serverStatus">Local WebSocket server: Stopped</div>
   </div>
   
-  <!-- Rest of your existing HTML remains the same -->
-  <!-- ... -->
-
   <script>
- document.addEventListener('DOMContentLoaded', async function() {
-  const pyodideReady = await initPyodide();
+    // Global variables
+    let pyodide;
+    let pythonBridgeActive = false;
 
-  if (pyodideReady) {
-    const udpIp = document.getElementById('udpTargetIp').value.trim();
-    const udpPort = parseInt(document.getElementById('udpTargetPort').value);
-    const wsPort = parseInt(document.getElementById('bridgePort').value);
+    function updatePythonStatus(message) {
+      const statusElement = document.getElementById('pythonStatus');
+      statusElement.textContent = message;
+      statusElement.scrollTop = statusElement.scrollHeight;
+    }
 
-    startPythonBridge(udpIp, udpPort, wsPort);
-  } else {
-    updatePythonStatus("Failed to initialize Pyodide.");
-  }
-});
-
-      
-   async function initPyodide() {
-  try {
-    console.log("STEP 1: Starting Pyodide load");
-    pythonStatus.textContent = "Loading Pyodide...";
-    
-    pyodide = await loadPyodide({
-      indexURL: "https://cdn.jsdelivr.net/pyodide/v0.23.4/full/"
-    });
-
-    console.log("STEP 2: Pyodide loaded");
-
-    await pyodide.loadPackage("micropip");
-    console.log("STEP 3: micropip loaded");
-
-    const micropip = pyodide.pyimport("micropip");
-    console.log("STEP 4: micropip imported");
-
-    await micropip.install("websockets");
-    console.log("STEP 5: websockets installed");
-
-    await micropip.install("python-osc");
-    console.log("STEP 6: python-osc installed");
-
-    pythonStatus.textContent = "Python bridge ready!\n";
-    return true;
-
-  } catch (e) {
-    console.error("PYODIDE INIT ERROR:", e);
-    pythonStatus.textContent = `Python bridge failed to load:\n${e}`;
-    return false;
-  }
-}
-
-  const code = `
+    async function startPythonBridge(udpIp, udpPort, wsPort) {
+      try {
+        const formattedCode = `
 import asyncio
 import websockets
 from pythonosc import udp_client, osc_message_builder
@@ -194,40 +155,59 @@ async def main():
 asyncio.run(main())
 `;
 
+        await pyodide.runPythonAsync(formattedCode);
+        pythonBridgeActive = true;
+        updatePythonStatus(`Python bridge running\nForwarding to ${udpIp}:${udpPort}`);
+      } catch (e) {
+        console.error("Python bridge error:", e);
+        updatePythonStatus(`Python bridge error:\n${e}`);
+      }
+    }
 
+    document.addEventListener('DOMContentLoaded', async function() {
+      updatePythonStatus("Starting Pyodide initialization...");
       
-      // Initialize Python bridge
-      const pyodideReady = await initPyodide();
-      
-      // Set default UDP target and start bridge
-      document.getElementById('updateUdpTarget').addEventListener('click', function() {
+      try {
+        pyodide = await loadPyodide({
+          indexURL: "https://cdn.jsdelivr.net/pyodide/v0.23.4/full/"
+        });
+        updatePythonStatus("Pyodide loaded, installing packages...");
+        
+        await pyodide.loadPackage("micropip");
+        const micropip = pyodide.pyimport("micropip");
+        
+        updatePythonStatus("Installing websockets...");
+        await micropip.install("websockets");
+        
+        updatePythonStatus("Installing python-osc...");
+        await micropip.install("python-osc");
+        
+        updatePythonStatus("Python bridge ready!");
+        
+        // Start with default values
+        const udpIp = document.getElementById('udpTargetIp').value.trim();
+        const udpPort = parseInt(document.getElementById('udpTargetPort').value);
+        const wsPort = parseInt(document.getElementById('bridgePort').value);
+        await startPythonBridge(udpIp, udpPort, wsPort);
+        
+      } catch (e) {
+        console.error("Initialization error:", e);
+        updatePythonStatus(`Initialization failed:\n${e}`);
+      }
+
+      // Setup event listeners
+      document.getElementById('updateUdpTarget').addEventListener('click', async function() {
         const udpIp = document.getElementById('udpTargetIp').value.trim();
         const udpPort = parseInt(document.getElementById('udpTargetPort').value);
         const wsPort = parseInt(document.getElementById('bridgePort').value);
         
         if (udpIp && udpPort >= 1024 && udpPort <= 65535) {
-          if (pyodideReady) {
-            startPythonBridge(udpIp, udpPort, wsPort);
-          } else {
-            updatePythonStatus("Python bridge not ready yet");
-          }
+          await startPythonBridge(udpIp, udpPort, wsPort);
         } else {
           updatePythonStatus("Invalid UDP target settings");
         }
       });
-      
-      // Auto-start with default values if Pyodide loaded successfully
-      if (pyodideReady) {
-        const udpIp = document.getElementById('udpTargetIp').value;
-        const udpPort = parseInt(document.getElementById('udpTargetPort').value);
-        const wsPort = parseInt(document.getElementById('bridgePort').value);
-        startPythonBridge(udpIp, udpPort, wsPort);
-      }
 
-      // Rest of your existing JavaScript code
-      // ... (all the original audio and OSC handling code remains the same)
-      
-      // Modify the bridge configuration update to restart Python bridge if needed
       document.getElementById('updateBridgeConfig').addEventListener('click', function() {
         const newIp = document.getElementById('bridgeIp').value.trim();
         const newPort = parseInt(document.getElementById('bridgePort').value);
@@ -247,12 +227,25 @@ asyncio.run(main())
           }
         }
       });
-      
-      // Initialize the rest of your application
-      initAudio();
-      updateBridgeDisplay();
-      startLocalServer();
     });
+
+    // Rest of your existing functions (initAudio, updateBridgeDisplay, etc.)
+    // These would need to be included as well for complete functionality
+    function initAudio() {
+      // Your audio initialization code
+    }
+
+    function updateBridgeDisplay() {
+      // Your bridge display update code
+    }
+
+    function startLocalServer() {
+      // Your local server start code
+    }
+
+    function stopLocalServer() {
+      // Your local server stop code
+    }
   </script>
 </body>
 </html>
